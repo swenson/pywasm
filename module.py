@@ -2,23 +2,51 @@ from collections import namedtuple
 from enum import IntEnum
 from typing import Callable, Tuple
 import sys
+import struct
 
 Section = namedtuple('Section', ['section_id', 'contents'])
 CustomSection = namedtuple('CustomSection', ['name', 'bytes'])
 TypeSection = namedtuple('TypeSection', ['function_types'])
 ImportSection = namedtuple('ImportSection', ['imports'])
+FunctionSection = namedtuple('FunctionSection', ['funcs'])
+TableSection = namedtuple('TableSection', ['tables'])
+MemorySection = namedtuple('MemorySection', ['memories'])
+GlobalSection = namedtuple('GlobalSection', ['globals'])
+ExportSection = namedtuple('ExportSection', ['exports'])
+StartSection = namedtuple('StartSection', ['start'])
+ElementSection = namedtuple('ElementSection', ['elemsec'])
+
 FunctionType = namedtuple('FunctionType', ['parameter_types', 'result_types'])
 Import = namedtuple('Import', ['mod', 'nm', 'd'])
+FuncIdx = namedtuple('FuncIdx', ['x'])
+TableIdx = namedtuple('TableIdx', ['x'])
+MemIdx = namedtuple('MemIdx', ['x'])
+GlobalIdx = namedtuple('GlobalIdx', ['x'])
 TypeIdx = namedtuple('TypeIdx', ['x'])
+
 TableType = namedtuple('TableType', ['et', 'lim'])
 MemType = namedtuple('MemType', ['lim'])
 GlobalType = namedtuple('GlobalType', ['t', 'm'])
+Global = namedtuple('Global', ['gt', 'e'])
 FuncRef = 0x70
 Limits = namedtuple('Limits', ['n', 'm'])
+Expr = namedtuple('Expr', ['instructions'])
+Export = namedtuple('Export', ['nm', 'd'])
+Elem = namedtuple('Elem', ['x', 'e', 'y'])
 
 CUSTOM_SECTION_ID = 0
 TYPE_SECTION_ID = 1
 IMPORT_SECTION_ID = 2
+FUNCTION_SECTION_ID = 3
+TABLE_SECTION_ID = 4
+MEMORY_SECTION_ID = 5
+GLOBAL_SECTION_ID = 6
+EXPORT_SECTION_ID = 7
+# START_SECTION_ID = 8
+ELEMENT_SECTION_ID = 9
+
+
+
 
 class ValType(IntEnum):
     I32 = 0x7f
@@ -48,10 +76,124 @@ def read_module(f: bytes):
         elif section_id == IMPORT_SECTION_ID:
             section = parse_import_section(contents)
             print(f"Import section, {section.imports}")
+        elif section_id == FUNCTION_SECTION_ID:
+            section = parse_function_section(contents)
+            print(f"Function section, {len(section.funcs)} functions")
+        elif section_id == TABLE_SECTION_ID:
+            section = parse_table_section(contents)
+            print(f"Table section, {section.tables}")
+        elif section_id == MEMORY_SECTION_ID:
+            section = parse_memory_section(contents)
+            print(f"Memory section, {section.memories}")
+        elif section_id == GLOBAL_SECTION_ID:
+            section = parse_global_section(contents)
+            print(f"Global section, {section.globals}")
+        elif section_id == EXPORT_SECTION_ID:
+            section = parse_export_section(contents)
+            print(f"Export section, {section.exports}")
+        elif section_id == ELEMENT_SECTION_ID:
+            section = parse_element_section(contents)
+            print(f"Element section, {len(section.elemsec)} elements")
         else:
             print(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
         sections.append(section)
+
+
+def parse_element_section(raw: bytes) -> ElementSection:
+    elemsec, _ = read_vector(raw, decoder=read_element)
+    return ElementSection(elemsec)
+
+
+def read_element(raw: bytes) -> (Elem, int):
+    x, l1 = read_u32(raw)
+    x = TableIdx(x)
+    e, l2 = read_expr(raw[l1:])
+    y, l3 = read_vector(raw[l1+l2:], decoder=read_u32)
+    y = [FuncIdx(z) for z in y]
+    return Elem(x, e, y), l1 + l2 + l3
+
+
+def parse_export_section(raw: bytes) -> ExportSection:
+    exports, _ = read_vector(raw, decoder=read_export)
+    return ExportSection(exports)
+
+
+def read_export(raw: bytes) -> (Export, int):
+    nm, l1 = read_name(raw)
+    d, l2 = read_exportdesc(raw[l1:])
+    return Export(nm, d), l1 + l2
+
+
+def read_exportdesc(raw: bytes) -> (any, int):
+    assert raw[0] <= 3
+    x, l = read_u32(raw[1:])
+    if raw[0] == 0:
+        return FuncIdx(x), l + 1
+    elif raw[0] == 0:
+        return TableIdx(x), l + 1
+    elif raw[0] == 0:
+        return MemIdx(x), l + 1
+    else:
+        return GlobalIdx(x), l + 1
+
+
+def parse_global_section(raw: bytes) -> GlobalSection:
+    globals, _ = read_vector(raw, decoder=read_global)
+    return GlobalSection(globals)
+
+
+def read_global(raw: bytes) -> (Global, int):
+    gt, l1 = read_globaltype(raw)
+    e, l2 = read_expr(raw[l1:])
+    return Global(gt, e), l1 + l2
+
+
+def read_expr(raw: bytes) -> (Expr, int):
+    instructions = []
+    l = 0
+    while raw[l] != 0xb:
+        instr, l2 = read_instruction(raw[l:])
+        l += l2
+        instructions.append(instr)
+    return Expr(instructions), l + 1
+
+
+def read_instruction(raw: bytes) -> (bytes, int):
+    if raw[0] == 0x41:
+        _, l = read_i32(raw[1:])
+        return raw[:1+l], 1+l
+    elif raw[0] == 0x42:
+        _, l = read_i64(raw[1:])
+        return raw[:1+l], 1+l
+    elif raw[0] == 0x41:
+        _, l = read_f32(raw[1:])
+        return raw[:1+l], 1+l
+    elif raw[0] == 0x41:
+        _, l = read_f64(raw[1:])
+        return raw[:1+l], 1+l
+    return raw[0], 1
+
+def parse_memory_section(raw: bytes) -> MemorySection:
+    memories, _ = read_vector(raw, decoder=read_mem)
+    return MemorySection(memories)
+
+
+def read_mem(raw: bytes) -> (MemType, int):
+    return read_memtype(raw)
+
+def parse_table_section(raw: bytes) -> TableSection:
+    tables, _ = read_vector(raw, decoder=read_table)
+    return TableSection(tables)
+
+
+def read_table(raw: bytes) -> (TableType, int):
+    return read_tabletype(raw)
+
+
+def parse_function_section(raw: bytes) -> FunctionSection:
+    funcs, _ = read_vector(raw, decoder=read_typeidx)
+    return FunctionSection(funcs)
 
 
 def parse_import_section(raw: bytes) -> ImportSection:
@@ -111,9 +253,11 @@ def read_limits(raw: bytes) -> (Limits, int):
         m, l2 = read_u32(raw[1+l1:])
     return Limits(n, m), 1 + l1 + l2
 
+
 def read_elemtype(raw: bytes) -> (FuncRef, int):
     assert raw[0] == 0x70
     return FuncRef, 1
+
 
 def parse_type_section(raw: bytes) -> TypeSection:
     function_types = read_vector(raw, decoder=read_function_type)
@@ -129,6 +273,7 @@ def read_function_type(raw: bytes) -> (FunctionType, int):
 
 def read_valtype(raw: bytes) -> (ValType, int):
     return ValType(raw[0]), 1
+
 
 def parse_custom_section(raw: bytes) -> CustomSection:
     name, length = read_name(raw)
@@ -164,6 +309,30 @@ def read_u32(f: bytes) -> (int, int):
         l += 1
         num |= (f[l] & 0x7f) << (7*l)
     return num, l + 1
+
+
+def read_i32(f: bytes) -> (int, int):
+    l = 0
+    num = f[0] & 0x7f
+    while f[l] & 0x80:
+        l += 1
+        num |= (f[l] & 0x7f) << (7*l)
+    if f[l] & 0x40:
+        num = (-num) & ((1<<(7*(l+1)-1))-1)
+        num = -num
+    return num, l + 1
+
+
+def read_i64(f: bytes) -> (int, int):
+    return read_i32(f)
+
+
+def read_f32(f: bytes) -> (float, int):
+    return struct.unpack('<f', f[:4])[0], 4
+
+
+def read_f64(f: bytes) -> (float, int):
+    return struct.unpack('<d', f[:8])[0], 8
 
 
 with open(sys.argv[1], 'rb') as fin:
