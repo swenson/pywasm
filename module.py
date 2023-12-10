@@ -15,6 +15,8 @@ GlobalSection = namedtuple("GlobalSection", ["globals"])
 ExportSection = namedtuple("ExportSection", ["exports"])
 StartSection = namedtuple("StartSection", ["start"])
 ElementSection = namedtuple("ElementSection", ["elemsec"])
+CodeSection = namedtuple("CodeSection", ["code"])
+DataSection = namedtuple("DataSection", ["seg"])
 
 FunctionType = namedtuple("FunctionType", ["parameter_types", "result_types"])
 Import = namedtuple("Import", ["mod", "nm", "d"])
@@ -33,6 +35,10 @@ Limits = namedtuple("Limits", ["n", "m"])
 Expr = namedtuple("Expr", ["instructions"])
 Export = namedtuple("Export", ["nm", "d"])
 Elem = namedtuple("Elem", ["x", "e", "y"])
+Code = namedtuple("Code", ["size", "code"])
+Func = namedtuple("Func", ["t", "e"])
+Locals = namedtuple("Locals", ["n", "t"])
+Data = namedtuple("Data", ["x", "e", "b"])
 
 CUSTOM_SECTION_ID = 0
 TYPE_SECTION_ID = 1
@@ -44,6 +50,8 @@ GLOBAL_SECTION_ID = 6
 EXPORT_SECTION_ID = 7
 # START_SECTION_ID = 8
 ELEMENT_SECTION_ID = 9
+CODE_SECTION_ID = 10
+DATA_SECTION_ID = 11
 
 
 class ValType(IntEnum):
@@ -92,10 +100,55 @@ def read_module(f: bytes):
         elif section_id == ELEMENT_SECTION_ID:
             section = parse_element_section(contents)
             print(f"Element section, {len(section.elemsec)} elements")
+        # elif section_id == CODE_SECTION_ID:
+        #     section = parse_code_section(contents)
+        #     print(f"Code section, {len(section.code)} entries")
+        elif section_id == DATA_SECTION_ID:
+            section = parse_data_section(contents)
+            print(f"Data section, {len(section.seg)} entries")
         else:
             print(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
         sections.append(section)
+
+
+def parse_data_section(raw: bytes) -> DataSection:
+    data, _ = read_vector(raw, decoder=read_data)
+    return DataSection(data)
+
+
+def read_data(raw: bytes) -> (Data, int):
+    x, l1 = read_u32(raw)
+    x = MemIdx(x)
+    e, l2 = read_expr(raw[l1:])
+    b, l3 = read_vector_bytes(raw[l1 + l2 :])
+    return Data(x, e, b), l1 + l2 + l3
+
+
+def parse_code_section(raw: bytes) -> CodeSection:
+    code, _ = read_vector(raw, decoder=read_code)
+    return CodeSection(code)
+
+
+def read_code(raw: bytes) -> (Code, int):
+    size, l1 = read_u32(raw)
+    # print(f"code size {size}")
+    # code, l2 = read_func(raw[l1:])
+    return Code(size, None), l1 + size
+
+
+def read_func(raw: bytes) -> (Func, int):
+    t, l1 = read_vector(raw, decoder=read_locals)
+    e, l2 = read_expr(raw[l1:])
+    print(f"Read function with locals {t} and instructions {len(e.instructions)}")
+    return Func(t, e), l1 + l2
+
+
+def read_locals(raw: bytes) -> (Locals, int):
+    n, l1 = read_u32(raw)
+    print(f"Locals {n} of type {raw[l1]}")
+    t, l2 = read_valtype(raw[l1:])
+    return Locals(n, t), l1 + l2
 
 
 def parse_element_section(raw: bytes) -> ElementSection:
@@ -147,10 +200,10 @@ def read_global(raw: bytes) -> (Global, int):
     return Global(gt, e), l1 + l2
 
 
-def read_expr(raw: bytes) -> (Expr, int):
+def read_expr(raw: bytes, term=0xB) -> (Expr, int):
     instructions = []
     l = 0
-    while raw[l] != 0xB:
+    while raw[l] != term:
         instr, l2 = read_instruction(raw[l:])
         l += l2
         instructions.append(instr)
@@ -158,19 +211,45 @@ def read_expr(raw: bytes) -> (Expr, int):
 
 
 def read_instruction(raw: bytes) -> (bytes, int):
-    if raw[0] == 0x41:
+    op = raw[0]
+    if op >= 0x45:
+        return raw[:1], 1
+    elif op == 0x00 or op == 0x01 or op == 0x0F:
+        return raw[:1], 1
+    elif op == 0x1A or op == 0x1B:
+        return raw[:1], 1
+    elif op == 0x3F or op == 0x40:
+        return raw[:2], 2
+    elif 0x02 <= op <= 0x04:
+        _, l = read_expr(raw[2:])
+        return raw[: 2 + l], 2 + l
+    elif op == 0xC or op == 0xD or op == 0x10 or (0x20 <= op <= 0x24):
+        _, l = read_u32(raw[1:])
+        return raw[: l + 1], l + 1
+    elif op == 0x0E:
+        _, l = read_vector(raw[1:], decoder=read_u32)
+        _, l2 = read_u32(raw[1 + l :])
+        return raw[: l + l2 + 1], l + l2 + 1
+    elif op == 0x11:
+        _, l = read_u32(raw[1:])
+        return raw[: l + 2], l + 2
+    elif 0x28 <= op <= 0x3E:
+        _, l1 = read_u32(raw[1:])
+        _, l2 = read_u32(raw[1 + l1 :])
+        return raw[: 1 + l1 + l2], 1 + l1 + l2
+    elif op == 0x41:
         _, l = read_i32(raw[1:])
         return raw[: 1 + l], 1 + l
-    elif raw[0] == 0x42:
+    elif op == 0x42:
         _, l = read_i64(raw[1:])
         return raw[: 1 + l], 1 + l
-    elif raw[0] == 0x41:
+    elif op == 0x43:
         _, l = read_f32(raw[1:])
         return raw[: 1 + l], 1 + l
-    elif raw[0] == 0x41:
+    elif op == 0x44:
         _, l = read_f64(raw[1:])
         return raw[: 1 + l], 1 + l
-    return raw[0], 1
+    assert False
 
 
 def parse_memory_section(raw: bytes) -> MemorySection:
