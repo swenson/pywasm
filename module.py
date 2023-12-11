@@ -29,6 +29,7 @@ TableIdx = namedtuple("TableIdx", ["x"])
 MemIdx = namedtuple("MemIdx", ["x"])
 GlobalIdx = namedtuple("GlobalIdx", ["x"])
 TypeIdx = namedtuple("TypeIdx", ["x"])
+LabelIdx = namedtuple("LabelIdx", ["x"])
 
 TableType = namedtuple("TableType", ["et", "lim"])
 MemType = namedtuple("MemType", ["lim"])
@@ -212,15 +213,16 @@ def peek(r: BinaryIO) -> int:
     return p
 
 
-def read_expr(raw: BinaryIO, term=0xB) -> Expr:
+def read_expr(raw: BinaryIO, term=frozenset([0xB])) -> Expr:
     instructions = []
     p = peek(raw)
-    while p != term:
+    while p not in term:
         instr = read_instruction(raw)
         instructions.append(instr)
         p = peek(raw)
-    assert raw.read(1)[0] == term
-    instructions.append(term)
+    last = Opcode(raw.read(1)[0])
+    assert last in term
+    instructions.append(Op(last, None, None))
     return Expr(instructions)
 
 
@@ -238,6 +240,7 @@ def read_code(raw: BinaryIO) -> Code:
     code = read_func(raw)
     d = raw.tell()
     assert size == d - c
+    # print(f"code = {code.e.instructions}")
     return Code(size, code)
 
 
@@ -254,75 +257,313 @@ def read_locals(raw: BinaryIO) -> Locals:
     return Locals(n, t)
 
 
-def read_instruction(raw: BinaryIO) -> bytes:
-    op = raw.read(1)[0]
-    bop = bytes((op,))
+class Opcode(IntEnum):
+    unreachable = 0x00
+    nop = 0x01
+    block = 0x02
+    loop = 0x03
+    if_ = 0x04
+    else_ = 0x05
+    end = 0x0B
+    br = 0x0C
+    bf_if = 0x0D
+    br_table = 0x0E
+    return_ = 0x0F
+    call = 0x10
+    call_indirect = 0x11
+    ref_null = 0xD0
+    ref_is_null = 0xD1
+    ref_func = 0xD2
+    drop = 0x1A
+    select = 0x1B
+    select_vec = 0x1C
+    local_get = 0x20
+    local_set = 0x21
+    local_tee = 0x22
+    global_get = 0x23
+    global_set = 0x24
+    table_get = 0x25
+    table_set = 0x26
+    i32_load = 0x28
+    i64_load = 0x29
+    f32_load = 0x2A
+    f64_load = 0x2B
+    i32_load8_s = 0x2C
+    i32_load8_u = 0x2D
+    i32_load16_s = 0x2E
+    i32_load16_u = 0x2F
+    i64_load8_s = 0x30
+    i64_load8_u = 0x31
+    i64_load16_s = 0x32
+    i64_load16_u = 0x33
+    i64_load32_s = 0x34
+    i64_load32_u = 0x35
+    i32_store = 0x36
+    i64_store = 0x37
+    f32_store = 0x38
+    f64_store = 0x39
+    i32_store8 = 0x3A
+    i32_store16 = 0x3B
+    i64_store8 = 0x3C
+    i64_store16 = 0x3D
+    i64_store32 = 0x3E
+    memory_size = 0x3F
+    memory_grow = 0x40
+    i32_const = 0x41
+    i64_const = 0x42
+    f32_const = 0x43
+    f64_const = 0x44
 
+    i32_eqz = 0x45
+    i32_eq = 0x46
+    i32_ne = 0x47
+    i32_lt_s = 0x48
+    i32_lt_u = 0x49
+    i32_gt_s = 0x4A
+    i32_gt_u = 0x4B
+    i32_le_s = 0x4C
+    i32_le_u = 0x4D
+    i32_ge_s = 0x4E
+    i32_ge_u = 0x4F
+    i64_eqz = 0x50
+    i64_eq = 0x51
+    i64_ne = 0x52
+    i64_lt_s = 0x53
+    i64_lt_u = 0x54
+    i64_gt_s = 0x55
+    i64_gt_u = 0x56
+    i64_le_s = 0x57
+    i64_le_u = 0x58
+    i64_ge_s = 0x59
+    i64_ge_u = 0x5A
+    f32_eq = 0x5B
+    f32_ne = 0x5C
+    f32_lt = 0x5D
+    f32_gt = 0x5E
+    f32_le = 0x5F
+    f32_ge = 0x60
+    f64_eq = 0x61
+    f64_ne = 0x62
+    f64_lt = 0x63
+    f64_gt = 0x64
+    f64_le = 0x65
+    f64_ge = 0x66
+    i32_clz = 0x67
+    i32_ctz = 0x68
+    i32_popcnt = 0x69
+    i32_add = 0x6A
+    i32_sub = 0x6B
+    i32_mul = 0x6C
+    i32_div_s = 0x6D
+    i32_div_u = 0x6E
+    i32_rem_s = 0x6F
+    i32_rem_u = 0x70
+    i32_and = 0x71
+    i32_or = 0x72
+    i32_xor = 0x73
+    i32_shl = 0x74
+    i32_shr_s = 0x75
+    i32_shr_u = 0x76
+    i32_rotl = 0x77
+    i32_rotr = 0x78
+    i64_clz = 0x79
+    i64_ctz = 0x7A
+    i64_popcnt = 0x7B
+    i64_add = 0x7C
+    i64_sub = 0x7D
+    i64_mul = 0x7E
+    i64_div_s = 0x7F
+    i64_div_u = 0x80
+    i64_rem_s = 0x81
+    i64_rem_u = 0x82
+    i64_and = 0x83
+    i64_or = 0x84
+    i64_xor = 0x85
+    i64_shl = 0x86
+    i64_shr_s = 0x87
+    i64_shr_u = 0x88
+    i64_rotl = 0x89
+    i64_rotr = 0x8A
+    f32_abs = 0x8B
+    f32_neg = 0x8C
+    f32_ceil = 0x8D
+    f32_floor = 0x8E
+    f32_trunc = 0x8F
+    f32_nearest = 0x90
+    f32_sqrt = 0x91
+    f32_add = 0x92
+    f32_sub = 0x93
+    f32_mul = 0x94
+    f32_div = 0x95
+    f32_min = 0x96
+    f32_max = 0x97
+    f32_copysign = 0x98
+    f64_abs = 0x99
+    f64_neg = 0x9A
+    f64_ceil = 0x9B
+    f64_floor = 0x9C
+    f64_trunc = 0x9D
+    f64_nearest = 0x9E
+    f64_sqrt = 0x9F
+    f64_add = 0xA0
+    f64_sub = 0xA1
+    f64_mul = 0xA2
+    f64_div = 0xA3
+    f64_min = 0xA4
+    f64_max = 0xA5
+    f64_copysign = 0xA6
+    i32_wrap_i64 = 0xA7
+    i32_trunc_f32_s = 0xA8
+    i32_trunc_f32_u = 0xA9
+    i32_trunc_f64_s = 0xAA
+    i32_trunc_f64_u = 0xAB
+    i64_extend_i32_s = 0xAC
+    i64_extend_i32_u = 0xAD
+    i64_trunc_f32_s = 0xAE
+    i64_trunc_f32_u = 0xAF
+    i64_trunc_f64_s = 0xB0
+    i64_trunc_f64_u = 0xB1
+    f32_convert_i32_s = 0xB2
+    f32_convert_i32_u = 0xB3
+    f32_convert_i64_s = 0xB4
+    f32_convert_i64_u = 0xB5
+    f32_demote_f64 = 0xB6
+    f64_convert_i32_s = 0xB7
+    f64_convert_i32_u = 0xB8
+    f64_convert_i64_s = 0xB9
+    f64_convert_i64_u = 0xBA
+    f64_promote_f32 = 0xBB
+    i32_reinterpret_f32 = 0xBC
+    i64_reinterpret_f64 = 0xBD
+    f32_reinterpret_i32 = 0xBE
+    f64_reinterpret_i64 = 0xBF
+    i32_extend8_s = 0xC0
+    i32_extend16_s = 0xC1
+    i64_extend8_s = 0xC2
+    i64_extend16_s = 0xC3
+    i64_extend32_s = 0xC4
+
+    ext_fc = 0xFC
+    ext_fd = 0xFD
+
+
+class FCSubOp(IntEnum):
+    i32_trunc_sat_f32_s = 0
+    i32_trunc_sat_f32_u = 1
+    i32_trunc_sat_f64_s = 2
+    i32_trunc_sat_f64_u = 3
+    i64_trunc_sat_f32_s = 4
+    i64_trunc_sat_f32_u = 5
+    i64_trunc_sat_f64_s = 6
+    i64_trunc_sat_f64_u = 7
+    memory_init = 8
+    data_drop = 9
+    memory_copy = 10
+    memory_fill = 11
+    table_init = 12
+    elem_drop = 13
+    table_copy = 14
+    table_grow = 15
+    table_size = 16
+    table_fill = 17
+
+
+class FDSubOp(IntEnum):
+    pass
+
+
+Op = namedtuple("Op", ["opcode", "subop", "operands"])
+
+
+def read_fc_subop(r: BinaryIO) -> Op:
+    subop = read_u32(r)
+    subop = FCSubOp(subop)
+    operands = tuple()
+    if subop <= 7:
+        pass
+    elif subop == 12 or subop == 14:
+        a = read_u32(r)
+        b = read_u32(r)
+        operands = (a, b)
+    elif subop == 9 or subop == 13 or 15 <= subop <= 17:
+        x = read_u32(r)
+        operands = (x,)
+    elif subop == 8:
+        dataidx = read_u32(r)
+        operands = (dataidx,)
+        assert r.read(1)[0] == 0  # drop
+    elif subop == 10:
+        r.read(2)  # drop
+    elif subop == 11:
+        assert r.read(1)[0] == 0  # drop
+    else:
+        print(f"Unknown subop for 0xfc: {subop}")
+        assert False
+    return Op(0xFC, subop, operands)
+
+
+def read_instruction(r: BinaryIO) -> Op:
+    op = Opcode(r.read(1)[0])
     if op == 0xFC:
-        subop = read_u32(raw)
-        if subop <= 7:
-            pass
-        elif subop == 12 or subop == 14:
-            read_u32(raw)
-            read_u32(raw)
-        elif subop == 9 or subop == 13 or 15 <= subop <= 17:
-            read_u32(raw)
-        elif subop == 8:
-            read_u32(raw)
-            assert raw.read(1)[0] == 0
-        elif subop == 10:
-            raw.read(2)
-        elif subop == 11:
-            assert raw.read(1)[0] == 0
-        else:
-            print(f"Unknown subop for 0xfc: {subop}")
-            assert False
-
-        return op
-
+        return read_fc_subop(r)
     if op == 0xB or op == 0x05:
-        return bop
-    elif 0x45 <= op <= 0xBF:
-        return bop
+        return Op(op, None, None)
+    elif 0x45 <= op <= 0xC4:
+        return Op(op, None, None)
     elif op == 0x00 or op == 0x01 or op == 0x0F:
-        return bop
+        return Op(op, None, None)
     elif op == 0x1A or op == 0x1B:
-        return bop
+        return Op(op, None, None)
     elif op == 0x3F or op == 0x40:
-        raw.read(1)
-        return bop
-    elif 0x02 <= op <= 0x04:
-        x = raw.read(1)[0]
-        assert x == 0x40 or 0x7C <= x <= 0x7F
-        read_expr(raw)
-        return bop
-    elif op == 0xC or op == 0xD or op == 0x10 or (0x20 <= op <= 0x24):
-        read_u32(raw)
-        return bop
+        r.read(1)
+        return Op(op, None, None)
+    elif op == 0x02 or op == 0x03:
+        bt = r.read(1)[0]
+        assert bt == 0x40 or 0x7C <= bt <= 0x7F
+        expr = read_expr(r).instructions
+        return Op(op, None, (expr,))
+    elif op == 0x04:
+        bt = r.read(1)[0]
+        assert bt == 0x40 or 0x7C <= bt <= 0x7F
+        then = read_expr(r, frozenset([0xB, 0x5])).instructions
+        else_ = None
+        if then[-1].opcode == Opcode.else_:
+            else_ = read_expr(r)
+        return Op(op, None, (then, else_))
+    elif op == 0xC or op == 0xD:
+        label = LabelIdx(read_u32(r))
+        return Op(op, None, (label,))
+    elif 0x20 <= op <= 0x24:
+        arg = read_u32(r)
+        return Op(op, None, (arg,))
+    elif op == 0x10:
+        idx = FuncIdx(read_u32(r))
+        return Op(op, None, (idx,))
     elif op == 0x0E:
-        read_vector(raw, decoder=read_u32)
-        read_u32(raw)
-        return bop
+        v = read_vector(r, decoder=read_u32)
+        v = [LabelIdx(z) for z in v]
+        a = LabelIdx(read_u32(r))
+        return Op(op, None, (v, a))
     elif op == 0x11:
-        read_u32(raw)
-        raw.read(1)
-        return bop
+        x = read_u32(r)
+        r.read(1)  # TODO: this is contradictory between v1 and v2
+        return Op(op, None, (TypeIdx(x),))
     elif 0x28 <= op <= 0x3E:
-        read_u32(raw)
-        read_u32(raw)
-        return bop
+        a = read_u32(r)
+        o = read_u32(r)
+        return Op(op, None, (a, o))
     elif op == 0x41:
-        read_i32(raw)
-        return bop
+        n = read_i32(r)
+        return Op(op, None, (n,))
     elif op == 0x42:
-        read_i64(raw)
-        return bop
+        n = read_i64(r)
+        return Op(op, None, (n,))
     elif op == 0x43:
-        read_f32(raw)
-        return bop
+        n = read_f32(r)
+        return Op(op, None, (n,))
     elif op == 0x44:
-        read_f64(raw)
-        return bop
+        n = read_f64(r)
+        return Op(op, None, (n,))
     print(f"op = {op:x}")
     assert False
 
