@@ -1,12 +1,14 @@
 from collections import namedtuple
 from enum import IntEnum
-from typing import Callable, Tuple, BinaryIO
+from typing import Callable, BinaryIO, Optional
 import sys
 import struct
 import io
 
 # necessary for large function parsing
 sys.setrecursionlimit(100000)
+
+Module = namedtuple("Module", ["sections"])
 
 Section = namedtuple("Section", ["section_id", "contents"])
 CustomSection = namedtuple("CustomSection", ["name", "bytes"])
@@ -53,7 +55,7 @@ TABLE_SECTION_ID = 4
 MEMORY_SECTION_ID = 5
 GLOBAL_SECTION_ID = 6
 EXPORT_SECTION_ID = 7
-# START_SECTION_ID = 8
+START_SECTION_ID = 8
 ELEMENT_SECTION_ID = 9
 CODE_SECTION_ID = 10
 DATA_SECTION_ID = 11
@@ -66,7 +68,262 @@ class ValType(IntEnum):
     F64 = 0x7C
 
 
-def read_module(f: bytes):
+default_values = {
+    ValType.I32: 0,
+    ValType.I64: 0,
+    ValType.F32: 0.0,
+    ValType.F64: 0.0,
+}
+
+
+class Value:
+    def __init__(self, val: any, type: ValType):
+        self.val = val
+        self.type = type
+
+    def __repr__(self):
+        return f"{self.val}: {self.type.name}"
+
+
+def exec_module(mod: Module):
+    print("Executing module")
+    start: StartSection = None
+    functions: FunctionSection = None
+    code: CodeSection = None
+    typ: TypeSection = None
+    data: DataSection = None
+    globals_section: GlobalSection = None
+    for section in mod.sections:
+        if isinstance(section, StartSection):
+            start = section
+        elif isinstance(section, FunctionSection):
+            functions = section
+        elif isinstance(section, CodeSection):
+            code = section
+        elif isinstance(section, TypeSection):
+            typ = section
+        elif isinstance(section, DataSection):
+            data = section
+        elif isinstance(section, GlobalSection):
+            globals_section = section
+    if start is None:
+        exit("No start section found")
+
+    globals: list[Value] = []
+    for g in globals_section.globals:
+        g: Global
+        assert len(g.e.instructions) == 2
+        assert g.e.instructions[1].opcode == Opcode.end
+        op = g.e.instructions[0]
+        assert op.opcode in (
+            Opcode.i32_const,
+            Opcode.i64_const,
+            Opcode.f32_const,
+            Opcode.f64_const,
+        )
+        arg = op.operands[0]
+        if op.opcode == Opcode.i32_const:
+            globals.append(Value(arg, ValType.I32))
+        elif op.opcode == Opcode.i64_const:
+            globals.append(Value(arg, ValType.I64))
+        elif op.opcode == Opcode.f32_const:
+            globals.append(Value(arg, ValType.F32))
+        elif op.opcode == Opcode.f64_const:
+            globals.append(Value(arg, ValType.F64))
+
+    mem = []
+    for d in data.seg:
+        d: Data
+        memidx = d.x
+        expr = d.e
+        b = d.b
+        assert len(expr.instructions) == 2
+        assert expr.instructions[0].opcode == Opcode.global_get
+        assert expr.instructions[1].opcode == Opcode.end
+        idx = globals[expr.instructions[0].operands[0]].val
+        if len(mem) < idx + len(b):
+            needed = idx + len(b) - len(mem)
+            mem.extend([0] * needed)
+        for i in range(idx, idx + len(b)):
+            mem[i] = b[i - idx]
+
+    f = functions.funcs[start.start.x]
+    c = code.code[start.start.x].code
+    print(f"Start function idx = {start.start}, type = {typ.function_types[f.x]}")
+    parameter_types = typ.function_types[f.x].parameter_types
+    result_types = typ.function_types[f.x].result_types
+    parameters = [Value(default_values[t], t) for t in parameter_types]
+    stack = []
+    exec_function(c, parameters, stack, globals, mem, functions, typ, code)
+
+
+def i32_add(a: int, b: int) -> int:
+    mask = 0xFFFFFFFF
+    sign = 0x80000000
+    a = a & mask
+    b = b & mask
+    s = (a + b) & mask
+    if s & sign:
+        s = -(-s & mask)
+    return s
+
+
+class Jump:
+    def __init__(self, label: int):
+        self.label = label
+
+
+def exec_instruction(
+    inst: "Op",
+    locals: list[Value],
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    functions: FunctionSection,
+    typ: TypeSection,
+    codes: CodeSection,
+) -> Optional[Jump]:
+    if inst.opcode == Opcode.end:
+        return
+    elif inst.opcode == Opcode.local_get:
+        stack.append(locals[inst.operands[0]])
+        return
+    elif inst.opcode == Opcode.i32_load:
+        offset = inst.operands[1]
+        num = struct.unpack("<i", bytes(mem[offset : offset + 4]))[0]
+        stack.append(Value(num, ValType.I32))
+        return
+    elif inst.opcode == Opcode.i32_store:
+        offset = inst.operands[1]
+        val = stack.pop()
+        data = struct.pack("<i", val.val)
+        for i in range(len(data)):
+            mem[offset + i] = data[i]
+        return
+    elif inst.opcode == Opcode.local_set:
+        idx = inst.operands[0]
+        locals[idx] = stack.pop()
+        return
+    elif inst.opcode == Opcode.local_tee:
+        idx = inst.operands[0]
+        locals[idx] = stack[-1]
+        return
+    elif inst.opcode == Opcode.global_get:
+        idx = inst.operands[0]
+        stack.append(globals[idx])
+        return
+    elif inst.opcode == Opcode.global_set:
+        idx = inst.operands[0]
+        globals[idx] = stack.pop()
+        return
+    elif inst.opcode == Opcode.i32_const:
+        c = inst.operands[0]
+        stack.append(Value(c, ValType.I32))
+        return
+    elif inst.opcode == Opcode.i32_add:
+        a = stack.pop()
+        b = stack.pop()
+        stack.append(Value(i32_add(a.val, b.val), ValType.I32))
+        return
+    elif inst.opcode == Opcode.i32_eq:
+        a = stack.pop()
+        b = stack.pop()
+        if a.val == b.val:
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+        return
+    elif inst.opcode == Opcode.br_if:
+        x = stack.pop()
+        label = inst.operands[0].x
+        if x.val == 1:
+            return Jump(label)
+        return
+    elif inst.opcode == Opcode.if_:
+        then = inst.operands[0]
+        else_ = inst.operands[1]
+        if stack.pop().val:
+            for inst2 in then:
+                j = exec_instruction(
+                    inst2, locals, stack, globals, mem, functions, typ, codes
+                )
+                if j is not None:
+                    if j.label == 0:
+                        break
+                    else:
+                        return Jump(j.label - 1)
+        elif else_:
+            for inst2 in else_:
+                j = exec_instruction(
+                    inst2, locals, stack, globals, mem, functions, typ, codes
+                )
+                if j is not None:
+                    if j.label == 0:
+                        break
+                    else:
+                        return Jump(j.label - 1)
+        return
+    elif inst.opcode == Opcode.block:
+        block = inst.operands[0]
+        for inst2 in block:
+            j = exec_instruction(
+                inst2, locals, stack, globals, mem, functions, typ, codes
+            )
+            if j is not None:
+                if j.label == 0:
+                    break
+                else:
+                    return Jump(j.label - 1)
+        return
+    elif inst.opcode == Opcode.call:
+        fidx = inst.operands[0]
+
+        type_idx = functions.funcs[fidx.x].x
+        parameter_types = typ.function_types[type_idx].parameter_types
+        code2 = codes.code[fidx.x].code
+        parameters = []
+        for i in range(len(parameter_types)):
+            parameters.append(stack.pop())
+        parameters.reverse()
+        return exec_function(
+            code2, parameters, stack, globals, mem, functions, typ, codes
+        )
+
+    print("Unknown instruction")
+    print(f"Locals: {locals}")
+    print(f"Stack: {stack}")
+    print(f"Current instruction: {inst}")
+    exit()
+
+
+def exec_function(
+    code: Func,
+    parameters: list[Value],
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    functions: FunctionSection,
+    typ: TypeSection,
+    codes: CodeSection,
+) -> Optional[Jump]:
+    locals = []
+    for i in range(len(parameters)):
+        locals.append(parameters[i])
+    for local_type in code.t:
+        for i in range(local_type.n):
+            locals.append(Value(default_values[local_type.t], local_type.t))
+    instructions = code.e.instructions
+    pc = 0
+    while pc < len(instructions):
+        j = exec_instruction(
+            instructions[pc], locals, stack, globals, mem, functions, typ, codes
+        )
+        if j is not None:
+            return j
+        pc += 1
+
+
+def read_module(f: bytes) -> Module:
     assert f[:4] == b"\0asm"
     assert f[4:8] == b"\x01\0\0\0"
     current = 8
@@ -86,7 +343,7 @@ def read_module(f: bytes):
             print(f"Type section, num functions = {len(section.function_types)}")
         elif section_id == IMPORT_SECTION_ID:
             section = parse_import_section(contents)
-            print(f"Import section, {section.imports}")
+            print(f"Import section, {len(section.imports)} imports")
         elif section_id == FUNCTION_SECTION_ID:
             section = parse_function_section(contents)
             print(f"Function section, {len(section.funcs)} functions")
@@ -98,10 +355,13 @@ def read_module(f: bytes):
             print(f"Memory section, {section.memories}")
         elif section_id == GLOBAL_SECTION_ID:
             section = parse_global_section(contents)
-            print(f"Global section, {section.globals}")
+            print(f"Global section, {len(section.globals)} globals")
         elif section_id == EXPORT_SECTION_ID:
             section = parse_export_section(contents)
-            print(f"Export section, {section.exports}")
+            print(f"Export section, {len(section.exports)} exports")
+        elif section_id == START_SECTION_ID:
+            section = parse_start_section(contents)
+            print(f"Start section, {section.start}")
         elif section_id == ELEMENT_SECTION_ID:
             section = parse_element_section(contents)
             print(f"Element section, {len(section.elemsec)} elements")
@@ -115,6 +375,7 @@ def read_module(f: bytes):
             print(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
         sections.append(section)
+    return Module(sections)
 
 
 def parse_data_section(raw: bytes) -> DataSection:
@@ -139,6 +400,12 @@ def parse_export_section(raw: bytes) -> ExportSection:
     r = io.BytesIO(raw)
     exports = read_vector(r, decoder=read_export)
     return ExportSection(exports)
+
+
+def parse_start_section(raw: bytes) -> StartSection:
+    r = io.BytesIO(raw)
+    start = FuncIdx(read_u32(r))
+    return StartSection(start)
 
 
 def parse_global_section(raw: bytes) -> GlobalSection:
@@ -266,7 +533,7 @@ class Opcode(IntEnum):
     else_ = 0x05
     end = 0x0B
     br = 0x0C
-    bf_if = 0x0D
+    br_if = 0x0D
     br_table = 0x0E
     return_ = 0x0F
     call = 0x10
@@ -726,5 +993,7 @@ def read_f64(f: BinaryIO) -> float:
     return struct.unpack("<d", f.read(8))[0]
 
 
-with open(sys.argv[1], "rb") as fin:
-    module = read_module(fin.read())
+if __name__ == "__main__":
+    with open(sys.argv[1], "rb") as fin:
+        module = read_module(fin.read())
+    exec_module(module)
