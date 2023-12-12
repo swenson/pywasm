@@ -157,15 +157,32 @@ def exec_module(mod: Module):
     exec_function(c, parameters, stack, globals, mem, functions, typ, code)
 
 
+i32_mask = 0xFFFFFFFF
+i32_sign = 0x80000000
+
+
+def i32_to_u32(a: int) -> int:
+    return a & i32_mask
+
+
 def i32_add(a: int, b: int) -> int:
-    mask = 0xFFFFFFFF
-    sign = 0x80000000
-    a = a & mask
-    b = b & mask
-    s = (a + b) & mask
-    if s & sign:
-        s = -(-s & mask)
+    a = a & i32_mask
+    b = b & i32_mask
+    s = (a + b) & i32_mask
+    if s & i32_sign:
+        s = -(-s & i32_mask)
     return s
+
+
+def i32_shl(a: int, b: int) -> int:
+    s = (a << b) & i32_mask
+    if s & i32_sign:
+        s = -(-s & i32_mask)
+    return s
+
+
+def i32_shr_u(a: int, b: int) -> int:
+    return (a & i32_mask) >> b
 
 
 class Jump:
@@ -183,62 +200,103 @@ def exec_instruction(
     typ: TypeSection,
     codes: CodeSection,
 ) -> Optional[Jump]:
-    if inst.opcode == Opcode.end:
-        return
+    if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
+        pass
     elif inst.opcode == Opcode.local_get:
         stack.append(locals[inst.operands[0]])
-        return
     elif inst.opcode == Opcode.i32_load:
         offset = inst.operands[1]
         num = struct.unpack("<i", bytes(mem[offset : offset + 4]))[0]
         stack.append(Value(num, ValType.I32))
-        return
     elif inst.opcode == Opcode.i32_store:
         offset = inst.operands[1]
         val = stack.pop()
         data = struct.pack("<i", val.val)
         for i in range(len(data)):
             mem[offset + i] = data[i]
-        return
+    elif inst.opcode == Opcode.i32_load8_u:
+        offset = inst.operands[1]
+        num = struct.unpack("<B", bytes(mem[offset : offset + 1]))[0]
+        stack.append(Value(num, ValType.I32))
+    elif inst.opcode == Opcode.i32_load16_u:
+        offset = inst.operands[1]
+        num = struct.unpack("<H", bytes(mem[offset : offset + 2]))[0]
+        stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
         locals[idx] = stack.pop()
-        return
     elif inst.opcode == Opcode.local_tee:
         idx = inst.operands[0]
         locals[idx] = stack[-1]
-        return
     elif inst.opcode == Opcode.global_get:
         idx = inst.operands[0]
         stack.append(globals[idx])
-        return
     elif inst.opcode == Opcode.global_set:
         idx = inst.operands[0]
         globals[idx] = stack.pop()
-        return
     elif inst.opcode == Opcode.i32_const:
         c = inst.operands[0]
         stack.append(Value(c, ValType.I32))
-        return
     elif inst.opcode == Opcode.i32_add:
-        a = stack.pop()
         b = stack.pop()
+        a = stack.pop()
         stack.append(Value(i32_add(a.val, b.val), ValType.I32))
-        return
-    elif inst.opcode == Opcode.i32_eq:
-        a = stack.pop()
+    elif inst.opcode == Opcode.i32_sub:
         b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(i32_add(a.val, -b.val), ValType.I32))
+    elif inst.opcode == Opcode.i32_and:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(a.val & b.val, ValType.I32))
+    elif inst.opcode == Opcode.i32_or:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(a.val | b.val, ValType.I32))
+    elif inst.opcode == Opcode.i32_shl:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(i32_shl(a.val, b.val), ValType.I32))
+    elif inst.opcode == Opcode.i32_shr_u:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(i32_shr_u(a.val, b.val), ValType.I32))
+    elif inst.opcode == Opcode.i32_eq:
+        b = stack.pop()
+        a = stack.pop()
         if a.val == b.val:
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
-        return
+    elif inst.opcode == Opcode.i32_le_u:
+        b = i32_to_u32(stack.pop().val)
+        a = i32_to_u32(stack.pop().val)
+        if a <= b:
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i32_eqz:
+        a = stack.pop()
+        if a.val == 0:
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.br_if:
+        label = inst.operands[0].x
+        return Jump(label)
     elif inst.opcode == Opcode.br_if:
         x = stack.pop()
         label = inst.operands[0].x
         if x.val == 1:
             return Jump(label)
-        return
+    elif inst.opcode == Opcode.br_table:
+        x = stack.pop()
+        labels = inst.operands[0]
+        default = inst.operands[1]
+        if 0 <= x.val < len(labels):
+            return Jump(labels[x.val].x)
+        else:
+            return Jump(default.x)
     elif inst.opcode == Opcode.if_:
         then = inst.operands[0]
         else_ = inst.operands[1]
@@ -253,7 +311,7 @@ def exec_instruction(
                     else:
                         return Jump(j.label - 1)
         elif else_:
-            for inst2 in else_:
+            for inst2 in else_.instructions:
                 j = exec_instruction(
                     inst2, locals, stack, globals, mem, functions, typ, codes
                 )
@@ -262,7 +320,6 @@ def exec_instruction(
                         break
                     else:
                         return Jump(j.label - 1)
-        return
     elif inst.opcode == Opcode.block:
         block = inst.operands[0]
         for inst2 in block:
@@ -274,7 +331,6 @@ def exec_instruction(
                     break
                 else:
                     return Jump(j.label - 1)
-        return
     elif inst.opcode == Opcode.call:
         fidx = inst.operands[0]
 
@@ -288,12 +344,11 @@ def exec_instruction(
         return exec_function(
             code2, parameters, stack, globals, mem, functions, typ, codes
         )
-
-    print("Unknown instruction")
-    print(f"Locals: {locals}")
-    print(f"Stack: {stack}")
-    print(f"Current instruction: {inst}")
-    exit()
+    else:
+        print(f"Locals: {locals}")
+        print(f"Stack: {stack}")
+        print(f"Current instruction: {inst}")
+        raise (ValueError(f"Unknown instruction: {inst}"))
 
 
 def exec_function(
