@@ -85,6 +85,13 @@ class Value:
         return f"{self.val}: {self.type.name}"
 
 
+class ImportFunction:
+    def __init__(self, mod: str, name: str, typeIdx: int):
+        self.mod = mod
+        self.name = name
+        self.typeIdx = typeIdx
+
+
 def exec_module(mod: Module):
     print("Executing module")
     start: StartSection = None
@@ -93,6 +100,8 @@ def exec_module(mod: Module):
     typ: TypeSection = None
     data: DataSection = None
     globals_section: GlobalSection = None
+    import_section: ImportSection = None
+    import_functions = []
     for section in mod.sections:
         if isinstance(section, StartSection):
             start = section
@@ -106,10 +115,32 @@ def exec_module(mod: Module):
             data = section
         elif isinstance(section, GlobalSection):
             globals_section = section
+        elif isinstance(section, ImportSection):
+            import_section = section
     if start is None:
         exit("No start section found")
 
     globals: list[Value] = []
+    mem = []
+    tables = []
+    if import_section is not None:
+        for imp in import_section.imports:
+            if isinstance(imp.d, TypeIdx):
+                # TODO: patch in functions from this file into here
+                # TODO: we need to adjust the types?
+                import_functions.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
+            elif isinstance(imp.d, GlobalType):
+                # TODO: patch in globals from here
+                globals.append(Value(0, imp.d.t))
+            elif isinstance(imp.d, MemType):
+                if len(mem) < imp.d.lim.n:
+                    mem.extend([0] * (imp.d.lim.n - len(mem)))
+            elif isinstance(imp.d, TableType):
+                if len(tables) < imp.d.lim.n:
+                    tables.extend([0] * imp.d.lim.n)
+            else:
+                exit(f"Unsupported import: {imp}")
+
     for g in globals_section.globals:
         g: Global
         assert len(g.e.instructions) == 2
@@ -131,7 +162,6 @@ def exec_module(mod: Module):
         elif op.opcode == Opcode.f64_const:
             globals.append(Value(arg, ValType.F64))
 
-    mem = []
     for d in data.seg:
         d: Data
         memidx = d.x
@@ -147,14 +177,19 @@ def exec_module(mod: Module):
         for i in range(idx, idx + len(b)):
             mem[i] = b[i - idx]
 
-    f = functions.funcs[start.start.x]
-    c = code.code[start.start.x].code
+    print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
+    print(f"start fun = {start.start.x}")
+    startx = start.start.x - len(import_functions)
+    f = functions.funcs[startx]
+    c = code.code[startx].code
     print(f"Start function idx = {start.start}, type = {typ.function_types[f.x]}")
     parameter_types = typ.function_types[f.x].parameter_types
     result_types = typ.function_types[f.x].result_types
     parameters = [Value(default_values[t], t) for t in parameter_types]
     stack = []
-    exec_function(c, parameters, stack, globals, mem, functions, typ, code)
+    exec_function(
+        c, parameters, stack, globals, mem, functions, typ, code, import_functions
+    )
 
 
 i32_mask = 0xFFFFFFFF
@@ -199,6 +234,7 @@ def exec_instruction(
     functions: FunctionSection,
     typ: TypeSection,
     codes: CodeSection,
+    import_functions: list[ImportFunction],
 ) -> Optional[Jump]:
     if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
         pass
@@ -303,7 +339,15 @@ def exec_instruction(
         if stack.pop().val:
             for inst2 in then:
                 j = exec_instruction(
-                    inst2, locals, stack, globals, mem, functions, typ, codes
+                    inst2,
+                    locals,
+                    stack,
+                    globals,
+                    mem,
+                    functions,
+                    typ,
+                    codes,
+                    import_functions,
                 )
                 if j is not None:
                     if j.label == 0:
@@ -313,7 +357,15 @@ def exec_instruction(
         elif else_:
             for inst2 in else_.instructions:
                 j = exec_instruction(
-                    inst2, locals, stack, globals, mem, functions, typ, codes
+                    inst2,
+                    locals,
+                    stack,
+                    globals,
+                    mem,
+                    functions,
+                    typ,
+                    codes,
+                    import_functions,
                 )
                 if j is not None:
                     if j.label == 0:
@@ -324,7 +376,15 @@ def exec_instruction(
         block = inst.operands[0]
         for inst2 in block:
             j = exec_instruction(
-                inst2, locals, stack, globals, mem, functions, typ, codes
+                inst2,
+                locals,
+                stack,
+                globals,
+                mem,
+                functions,
+                typ,
+                codes,
+                import_functions,
             )
             if j is not None:
                 if j.label == 0:
@@ -336,13 +396,26 @@ def exec_instruction(
 
         type_idx = functions.funcs[fidx.x].x
         parameter_types = typ.function_types[type_idx].parameter_types
-        code2 = codes.code[fidx.x].code
+
+        fidx = fidx.x
+        if fidx < len(import_functions):
+            raise ValueError("Not supported yet: calling function %d" % fidx.x)
+        fidx -= len(import_functions)
+        code2 = codes.code[fidx].code
         parameters = []
         for i in range(len(parameter_types)):
             parameters.append(stack.pop())
         parameters.reverse()
         return exec_function(
-            code2, parameters, stack, globals, mem, functions, typ, codes
+            code2,
+            parameters,
+            stack,
+            globals,
+            mem,
+            functions,
+            typ,
+            codes,
+            import_functions,
         )
     else:
         print(f"Locals: {locals}")
@@ -360,6 +433,7 @@ def exec_function(
     functions: FunctionSection,
     typ: TypeSection,
     codes: CodeSection,
+    import_functions: list[ImportFunction],
 ) -> Optional[Jump]:
     locals = []
     for i in range(len(parameters)):
@@ -371,7 +445,15 @@ def exec_function(
     pc = 0
     while pc < len(instructions):
         j = exec_instruction(
-            instructions[pc], locals, stack, globals, mem, functions, typ, codes
+            instructions[pc],
+            locals,
+            stack,
+            globals,
+            mem,
+            functions,
+            typ,
+            codes,
+            import_functions,
         )
         if j is not None:
             return j
@@ -953,7 +1035,7 @@ def read_limits(raw: BinaryIO) -> Limits:
 
 def read_elemtype(raw: BinaryIO) -> FuncRef:
     assert raw.read(1)[0] == 0x70
-    return FuncRef, 1
+    return FuncRef
 
 
 def parse_type_section(raw: bytes) -> TypeSection:
