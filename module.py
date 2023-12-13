@@ -4,6 +4,7 @@ from typing import Callable, BinaryIO, Optional
 import sys
 import struct
 import io
+import time
 
 # necessary for large function parsing
 sys.setrecursionlimit(100000)
@@ -91,9 +92,15 @@ class ImportFunction:
         self.name = name
         self.typeIdx = typeIdx
 
+class WasmFunction:
+    def __init__(self, code: Func, parameter_types: list[ValType], result_types: list[ValType]):
+        self.code = code
+        self.parameter_types = parameter_types
+        self.result_types = result_types
 
-def exec_module(mod: Module):
-    print("Executing module")
+
+def init_module(mod: Module):
+    print("Initializing module")
     start: StartSection = None
     functions: FunctionSection = None
     code: CodeSection = None
@@ -101,6 +108,7 @@ def exec_module(mod: Module):
     data: DataSection = None
     globals_section: GlobalSection = None
     import_section: ImportSection = None
+    export_section: ExportSection = None
     import_functions = []
     for section in mod.sections:
         if isinstance(section, StartSection):
@@ -117,18 +125,20 @@ def exec_module(mod: Module):
             globals_section = section
         elif isinstance(section, ImportSection):
             import_section = section
+        elif isinstance(section, ExportSection):
+            export_section = section
     if start is None:
         exit("No start section found")
 
     globals: list[Value] = []
     mem = []
     tables = []
+    function_list = []
     if import_section is not None:
         for imp in import_section.imports:
             if isinstance(imp.d, TypeIdx):
                 # TODO: patch in functions from this file into here
-                # TODO: we need to adjust the types?
-                import_functions.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
+                function_list.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
             elif isinstance(imp.d, GlobalType):
                 # TODO: patch in globals from here
                 globals.append(Value(0, imp.d.t))
@@ -178,18 +188,38 @@ def exec_module(mod: Module):
             mem[i] = b[i - idx]
 
     print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
-    print(f"start fun = {start.start.x}")
-    startx = start.start.x - len(import_functions)
-    f = functions.funcs[startx]
-    c = code.code[startx].code
-    print(f"Start function idx = {start.start}, type = {typ.function_types[f.x]}")
-    parameter_types = typ.function_types[f.x].parameter_types
-    result_types = typ.function_types[f.x].result_types
-    parameters = [Value(default_values[t], t) for t in parameter_types]
+    for i in range(len(functions.funcs)):
+        function_list.append(WasmFunction(
+            code.code[i].code,
+            typ.function_types[functions.funcs[i].x].parameter_types,
+            typ.function_types[functions.funcs[i].x].result_types,
+        ))
+
+    # print(f"start fun = {start.start.x}")
+    # startx = start.start.x - len(import_functions)
+    # f = functions.funcs[startx]
+    # c = code.code[startx].code
+    # print(f"Start function idx = {start.start}, type = {typ.function_types[f.x]}")
+    # parameter_types = typ.function_types[f.x].parameter_types
+    # result_types = typ.function_types[f.x].result_types
+    parameters = [Value(default_values[t], t) for t in function_list[start.start.x].parameter_types]
     stack = []
     exec_function(
-        c, parameters, stack, globals, mem, functions, typ, code, import_functions
+        function_list[start.start.x].code, parameters, stack, globals, mem, function_list, typ, code, import_functions
     )
+    exports = {}
+    for export in export_section.exports:
+        exports[export.nm] = export.d
+    x = exports['PyRun_SimpleString'].x
+    parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
+    ptr = len(mem)
+    mem.extend("print(\"abc\")\0")
+    parameters[0] = Value(ptr, ValType.I32)
+    print(f"Parameters: {parameters}")
+    exec_function(
+        function_list[x].code, parameters, stack, globals, mem, function_list, typ, code, import_functions
+    )
+
 
 
 i32_mask = 0xFFFFFFFF
@@ -198,6 +228,13 @@ i32_sign = 0x80000000
 
 def i32_to_u32(a: int) -> int:
     return a & i32_mask
+
+
+def i32_to_s32(a: int) -> int:
+    a = i32_to_u32(a)
+    if a & i32_sign:
+        a = -(-a & i32_mask)
+    return a
 
 
 def i32_add(a: int, b: int) -> int:
@@ -224,6 +261,7 @@ class Jump:
     def __init__(self, label: int):
         self.label = label
 
+global_counter = 0
 
 def exec_instruction(
     inst: "Op",
@@ -231,32 +269,47 @@ def exec_instruction(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
-    functions: FunctionSection,
+    functions: list[ImportFunction | WasmFunction],
     typ: TypeSection,
     codes: CodeSection,
     import_functions: list[ImportFunction],
 ) -> Optional[Jump]:
+    global global_counter
+    print(f"{global_counter} Executing {inst}, stack length {len(stack)}, memory length {len(mem)}")
+    global_counter += 1
+    # if global_counter > 4876:
+    #     time.sleep(1.0)
     if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
         pass
     elif inst.opcode == Opcode.local_get:
+        print(f"Local get {inst.operands[0]} = {locals[inst.operands[0]]}")
         stack.append(locals[inst.operands[0]])
     elif inst.opcode == Opcode.i32_load:
         offset = inst.operands[1]
-        num = struct.unpack("<i", bytes(mem[offset : offset + 4]))[0]
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        num = struct.unpack("<I", bytes(mem[addr : addr + 4]))[0]
+        print(f"Load ({base_addr}+{offset}) => {num:x} ({bytes(mem[addr : addr + 4])})")
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_store:
         offset = inst.operands[1]
         val = stack.pop()
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
         data = struct.pack("<i", val.val)
         for i in range(len(data)):
-            mem[offset + i] = data[i]
+            mem[addr + i] = data[i]
     elif inst.opcode == Opcode.i32_load8_u:
         offset = inst.operands[1]
-        num = struct.unpack("<B", bytes(mem[offset : offset + 1]))[0]
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load16_u:
         offset = inst.operands[1]
-        num = struct.unpack("<H", bytes(mem[offset : offset + 2]))[0]
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
@@ -289,6 +342,10 @@ def exec_instruction(
         b = stack.pop()
         a = stack.pop()
         stack.append(Value(a.val | b.val, ValType.I32))
+    elif inst.opcode == Opcode.i32_xor:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(a.val ^ b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_shl:
         b = stack.pop()
         a = stack.pop()
@@ -317,7 +374,14 @@ def exec_instruction(
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.br_if:
+    elif inst.opcode == Opcode.i32_lt_s:
+        b = stack.pop()
+        a = stack.pop()
+        if i32_to_s32(a.val) < i32_to_s32(b.val):
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.br:
         label = inst.operands[0].x
         return Jump(label)
     elif inst.opcode == Opcode.br_if:
@@ -391,32 +455,57 @@ def exec_instruction(
                     break
                 else:
                     return Jump(j.label - 1)
+    elif inst.opcode == Opcode.loop:
+        block = inst.operands[0]
+        while True:
+            print("*** begin loop")
+            for inst2 in block:
+                j = exec_instruction(
+                    inst2,
+                    locals,
+                    stack,
+                    globals,
+                    mem,
+                    functions,
+                    typ,
+                    codes,
+                    import_functions,
+                )
+                if j is not None:
+                    if j.label == 0:
+                        break # back to beginning of loop
+                    else:
+                        return Jump(j.label - 1)
+            else:
+                break
+
     elif inst.opcode == Opcode.call:
         fidx = inst.operands[0]
 
-        type_idx = functions.funcs[fidx.x].x
-        parameter_types = typ.function_types[type_idx].parameter_types
-
-        fidx = fidx.x
-        if fidx < len(import_functions):
+        f = functions[fidx.x]
+        if isinstance(f, ImportFunction):
             raise ValueError("Not supported yet: calling function %d" % fidx.x)
-        fidx -= len(import_functions)
-        code2 = codes.code[fidx].code
-        parameters = []
-        for i in range(len(parameter_types)):
-            parameters.append(stack.pop())
-        parameters.reverse()
-        return exec_function(
-            code2,
-            parameters,
-            stack,
-            globals,
-            mem,
-            functions,
-            typ,
-            codes,
-            import_functions,
-        )
+        else:
+            code2 = f.code
+            parameter_types = f.parameter_types
+            # type_idx = functions.funcs[fidx.x].x
+            # parameter_types = typ.function_types[type_idx].parameter_types
+
+            parameters = []
+            for i in range(len(parameter_types)):
+                parameters.append(stack.pop())
+            parameters.reverse()
+            return exec_function(
+                code2,
+                parameters,
+                stack,
+                globals,
+                mem,
+                functions,
+                typ,
+                codes,
+                import_functions,
+            )
     else:
         print(f"Locals: {locals}")
         print(f"Stack: {stack}")
@@ -430,7 +519,7 @@ def exec_function(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
-    functions: FunctionSection,
+    functions: list[ImportFunction | WasmFunction],
     typ: TypeSection,
     codes: CodeSection,
     import_functions: list[ImportFunction],
@@ -1133,4 +1222,4 @@ def read_f64(f: BinaryIO) -> float:
 if __name__ == "__main__":
     with open(sys.argv[1], "rb") as fin:
         module = read_module(fin.read())
-    exec_module(module)
+    init_module(module)
