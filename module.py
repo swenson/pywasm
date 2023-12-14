@@ -92,8 +92,11 @@ class ImportFunction:
         self.name = name
         self.typeIdx = typeIdx
 
+
 class WasmFunction:
-    def __init__(self, code: Func, parameter_types: list[ValType], result_types: list[ValType]):
+    def __init__(
+        self, code: Func, parameter_types: list[ValType], result_types: list[ValType]
+    ):
         self.code = code
         self.parameter_types = parameter_types
         self.result_types = result_types
@@ -195,11 +198,13 @@ def init_module(mod: Module):
     print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
     import_len = len(function_names)
     for i in range(len(functions.funcs)):
-        function_list.append(WasmFunction(
-            code.code[i].code,
-            typ.function_types[functions.funcs[i].x].parameter_types,
-            typ.function_types[functions.funcs[i].x].result_types,
-        ))
+        function_list.append(
+            WasmFunction(
+                code.code[i].code,
+                typ.function_types[functions.funcs[i].x].parameter_types,
+                typ.function_types[functions.funcs[i].x].result_types,
+            )
+        )
         function_names.append("?")
     exports = {}
     for export in export_section.exports:
@@ -215,21 +220,44 @@ def init_module(mod: Module):
     # print(f"Start function idx = {start.start}, type = {typ.function_types[f.x]}")
     # parameter_types = typ.function_types[f.x].parameter_types
     # result_types = typ.function_types[f.x].result_types
-    parameters = [Value(default_values[t], t) for t in function_list[start.start.x].parameter_types]
+    parameters = [
+        Value(default_values[t], t)
+        for t in function_list[start.start.x].parameter_types
+    ]
     stack = []
     exec_function(
-        function_list[start.start.x].code, parameters, stack, globals, mem, function_list, typ, code, import_functions, function_names, element_section,
+        function_list[start.start.x].code,
+        parameters,
+        stack,
+        globals,
+        mem,
+        function_list,
+        typ,
+        code,
+        import_functions,
+        function_names,
+        element_section,
     )
     print("*** Call(PyRun_SimpleString)")
     print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
-    x = exports['PyRun_SimpleString'].x
+    x = exports["PyRun_SimpleString"].x
     parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
     ptr = len(mem)
-    mem.extend("print(\"abc\")\0")
+    mem.extend('print("abc")\0')
     parameters[0] = Value(ptr, ValType.I32)
     print(f"Parameters: {parameters}")
     exec_function(
-        function_list[x].code, parameters, stack, globals, mem, function_list, typ, code, import_functions, function_names, element_section,
+        function_list[x].code,
+        parameters,
+        stack,
+        globals,
+        mem,
+        function_list,
+        typ,
+        code,
+        import_functions,
+        function_names,
+        element_section,
     )
 
 
@@ -288,9 +316,11 @@ def i32_shr_u(a: int, b: int) -> int:
 def i32_shr_s(a: int, b: int) -> int:
     return (i32_to_s32(a) >> b) & i32_mask
 
+
 class Jump:
     def __init__(self, label: int):
         self.label = label
+
 
 global_counter = 0
 
@@ -308,7 +338,9 @@ def mem_read(mem: list[int], addr: int, size: int) -> bytes:
 def mem_write(mem: list[int], addr: int, data: bytes):
     if len(mem) < addr + len(data):
         if addr + len(data) - len(mem) > 16:
-            raise ValueError(f"Tried to extend memory too far: current = {len(mem)}, asked = {addr + len(data)}")
+            raise ValueError(
+                f"Tried to extend memory too far: current = {len(mem)}, asked = {addr + len(data)}"
+            )
         mem.extend([0] * (addr + len(data) - len(mem)))
     for i in range(len(data)):
         mem[addr + i] = data[i]
@@ -328,7 +360,9 @@ def exec_instruction(
     element_section: ElementSection,
 ) -> Optional[Jump]:
     global global_counter
-    print(f"{global_counter} Executing {inst}, stack length {len(stack)}, memory length {len(mem)}")
+    print(
+        f"{global_counter} Executing {inst}, stack length {len(stack)}, memory length {len(mem)}"
+    )
     global_counter += 1
     # if global_counter > 4876:
     #     input("> ")
@@ -379,7 +413,7 @@ def exec_instruction(
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<b", bytes(mem[addr: addr + 1]))[0]
+        num = struct.unpack("<b", bytes(mem[addr : addr + 1]))[0]
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load16_u:
         offset = inst.operands[1]
@@ -632,7 +666,7 @@ def exec_instruction(
                     if j.label == -1:
                         return j
                     elif j.label == 0:
-                        break # back to beginning of loop
+                        break  # back to beginning of loop
                     else:
                         return Jump(j.label - 1)
             else:
