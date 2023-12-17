@@ -1,3 +1,4 @@
+from array import array
 from collections import namedtuple
 from enum import IntEnum
 from typing import Callable, BinaryIO, Optional
@@ -136,8 +137,14 @@ def init_module(mod: Module):
     if start is None:
         exit("No start section found")
 
+
+    imports = {
+        "__memory_base": 1000000,
+        "__stack_pointer": 15000000,
+        "__heap_base": 10000000,
+    }
     globals: list[Value] = []
-    mem = []
+    mem = [0] * 20000000
     tables = []
     function_list = []
     function_names = []
@@ -146,10 +153,13 @@ def init_module(mod: Module):
             if isinstance(imp.d, TypeIdx):
                 # TODO: patch in functions from this file into here
                 function_list.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
+                print(f"import function {imp.mod}.{imp.nm}")
                 function_names.append(f"{imp.mod}.{imp.nm}")
             elif isinstance(imp.d, GlobalType):
                 # TODO: patch in globals from here
-                globals.append(Value(0, imp.d.t))
+                val = imports.get(imp.nm, 0)
+                print(f"globals[{len(globals)}] = import {imp.nm} = {val}")
+                globals.append(Value(val, imp.d.t))
             elif isinstance(imp.d, MemType):
                 if len(mem) < imp.d.lim.n:
                     mem.extend([0] * (imp.d.lim.n - len(mem)))
@@ -171,6 +181,7 @@ def init_module(mod: Module):
             Opcode.f64_const,
         )
         arg = op.operands[0]
+        print(f"globals[{len(globals)}] = {arg}")
         if op.opcode == Opcode.i32_const:
             globals.append(Value(arg, ValType.I32))
         elif op.opcode == Opcode.i64_const:
@@ -189,6 +200,7 @@ def init_module(mod: Module):
         assert expr.instructions[0].opcode == Opcode.global_get
         assert expr.instructions[1].opcode == Opcode.end
         idx = globals[expr.instructions[0].operands[0]].val
+        print(f"Initializing data memidx={memidx}, offset={idx}")
         if len(mem) < idx + len(b):
             needed = idx + len(b) - len(mem)
             mem.extend([0] * needed)
@@ -209,9 +221,10 @@ def init_module(mod: Module):
     exports = {}
     for export in export_section.exports:
         exports[export.nm] = export.d
-        if export.d.x >= len(function_names):
-            function_names.extend(["?"] * (export.d.x + 1 - len(function_names)))
-        function_names[export.d.x] = export.nm
+        if isinstance(export.d, FuncIdx):
+            if export.d.x >= len(function_names):
+                function_names.extend(["?"] * (export.d.x + 1 - len(function_names)))
+            function_names[export.d.x] = export.nm
 
     # print(f"start fun = {start.start.x}")
     # startx = start.start.x - len(import_functions)
@@ -240,6 +253,8 @@ def init_module(mod: Module):
     )
     print("*** Call(PyRun_SimpleString)")
     print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
+    print(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
+    print(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
     x = exports["PyRun_SimpleString"].x
     parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
     ptr = len(mem)
@@ -272,6 +287,9 @@ def i32_to_u32(a: int) -> int:
     return a & i32_mask
 
 
+def i64_to_u64(a: int) -> int:
+    return a & i64_mask
+
 def i32_to_s32(a: int) -> int:
     a = i32_to_u32(a)
     if a & i32_sign:
@@ -298,6 +316,13 @@ def i32_mul(a: int, b: int) -> int:
 def i32_div_u(a: int, b: int) -> int:
     a = a & i32_mask
     b = b & i32_mask
+    c = (a // b) & i32_mask
+    return c
+
+
+def i32_div_s(a: int, b: int) -> int:
+    a = i32_to_s32(a)
+    b = i32_to_s32(b)
     c = (a // b) & i32_mask
     return c
 
@@ -329,6 +354,8 @@ def mem_read(mem: list[int], addr: int, size: int) -> bytes:
     x = []
     for i in range(addr, addr + size):
         if i >= len(mem):
+            if i > len(mem) + 4:
+                raise ValueError(f"Reading too far from memory: {i} > {len(mem)}")
             x.append(0)
         else:
             x.append(mem[i])
@@ -361,7 +388,7 @@ def exec_instruction(
 ) -> Optional[Jump]:
     global global_counter
     print(
-        f"{global_counter} Executing {inst}, stack length {len(stack)}, memory length {len(mem)}"
+        f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}"
     )
     global_counter += 1
     # if global_counter > 4876:
@@ -376,8 +403,15 @@ def exec_instruction(
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
-        print(f"Load 0x{addr:x} -> 0x{num:x}")
+        print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
         stack.append(Value(num, ValType.I32))
+    elif inst.opcode == Opcode.i64_load:
+        offset = inst.operands[1]
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
+        print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
+        stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.i64_store:
         offset = inst.operands[1]
         val = stack.pop().val & i64_mask
@@ -421,6 +455,12 @@ def exec_instruction(
         addr = base_addr + offset
         num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
         stack.append(Value(num, ValType.I32))
+    elif inst.opcode == Opcode.i64_load32_u:
+        offset = inst.operands[1]
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        num = struct.unpack("<H", bytes(mem[addr: addr + 2]))[0]
+        stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
         locals[idx] = stack.pop()
@@ -431,12 +471,15 @@ def exec_instruction(
         print(f"  tee locals[{idx}] = {stack[-1]}")
     elif inst.opcode == Opcode.global_get:
         idx = inst.operands[0]
+        print(f"  get globals[{idx}] => {globals[idx]}")
         stack.append(globals[idx])
     elif inst.opcode == Opcode.global_set:
         idx = inst.operands[0]
         globals[idx] = stack.pop()
+        print(f"  set globals[{idx}] <= {globals[idx]}")
     elif inst.opcode == Opcode.i32_const:
         c = inst.operands[0]
+        print(f"  push 0x{c:x} ({inst})")
         stack.append(Value(c, ValType.I32))
     elif inst.opcode == Opcode.i64_const:
         c = inst.operands[0]
@@ -444,6 +487,7 @@ def exec_instruction(
     elif inst.opcode == Opcode.i32_add:
         b = stack.pop()
         a = stack.pop()
+        print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
         stack.append(Value(i32_add(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_sub:
         b = stack.pop()
@@ -453,11 +497,18 @@ def exec_instruction(
     elif inst.opcode == Opcode.i32_mul:
         b = stack.pop()
         a = stack.pop()
+        print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
         stack.append(Value(i32_mul(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_u:
         b = stack.pop()
         a = stack.pop()
+        print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
         stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
+    elif inst.opcode == Opcode.i32_div_s:
+        b = stack.pop()
+        a = stack.pop()
+        print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
+        stack.append(Value(i32_div_s(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_and:
         b = stack.pop()
         a = stack.pop()
@@ -470,6 +521,7 @@ def exec_instruction(
     elif inst.opcode == Opcode.i32_xor:
         b = stack.pop()
         a = stack.pop()
+        print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
         stack.append(Value(a.val ^ b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_shl:
         b = stack.pop()
@@ -494,8 +546,10 @@ def exec_instruction(
         b = i32_to_u32(stack.pop().val)
         a = i32_to_u32(stack.pop().val)
         if a <= b:
+            print(f"  le_u {a} <= {b} => True")
             stack.append(Value(1, ValType.I32))
         else:
+            print(f"  le_u {a} <= {b} => False")
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_lt_s:
         b = i32_to_s32(stack.pop().val)
@@ -508,6 +562,13 @@ def exec_instruction(
         a = stack.pop()
         print(f"  eqz? {a.val} -> {a.val == 0}")
         if a.val == 0:
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i64_ne:
+        b = stack.pop()
+        a = stack.pop()
+        if i64_to_u64(a.val) != i64_to_u64(b.val):
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
@@ -536,8 +597,10 @@ def exec_instruction(
         b = stack.pop()
         a = stack.pop()
         if i32_to_u32(a.val) >= i32_to_u32(b.val):
+            print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
             stack.append(Value(1, ValType.I32))
         else:
+            print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_ge_s:
         b = stack.pop()
@@ -546,13 +609,29 @@ def exec_instruction(
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i32_gt_s:
+        b = stack.pop()
+        a = stack.pop()
+        if i32_to_s32(a.val) > i32_to_s32(b.val):
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i32_le_s:
+        b = stack.pop()
+        a = stack.pop()
+        if i32_to_s32(a.val) <= i32_to_s32(b.val):
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.select:
         c = stack.pop()
         b = stack.pop()
         a = stack.pop()
         if c.val == 0:
+            print(f"  select({a}, {b}, {c}) -> {b}")
             stack.append(b)
         else:
+            print(f"  select({a}, {b}, {c}) -> {a}")
             stack.append(a)
     elif inst.opcode == Opcode.drop:
         stack.pop()
@@ -578,6 +657,7 @@ def exec_instruction(
         then = inst.operands[0]
         else_ = inst.operands[1]
         if stack.pop().val:
+            print("  if statement was true")
             for inst2 in then:
                 j = exec_instruction(
                     inst2,
@@ -600,6 +680,7 @@ def exec_instruction(
                     else:
                         return Jump(j.label - 1)
         elif else_:
+            print("  if statement was false and else was defined")
             for inst2 in else_.instructions:
                 j = exec_instruction(
                     inst2,
@@ -621,6 +702,8 @@ def exec_instruction(
                         break
                     else:
                         return Jump(j.label - 1)
+        else:
+            print("  if statement was false (but no else)")
     elif inst.opcode == Opcode.block:
         block = inst.operands[0]
         for inst2 in block:
@@ -679,10 +762,6 @@ def exec_instruction(
         if isinstance(f, ImportFunction):
             raise ValueError("Not supported yet: calling function %d" % fidx.x)
         else:
-            if fidx.x < len(function_names) and function_names[fidx.x] != "?":
-                print(f"*** Call({function_names[fidx.x]})")
-            else:
-                print(f"*** Call(f_{fidx.x})")
             code2 = f.code
             parameter_types = f.parameter_types
             # type_idx = functions.funcs[fidx.x].x
@@ -692,6 +771,10 @@ def exec_instruction(
             for i in range(len(parameter_types)):
                 parameters.append(stack.pop())
             parameters.reverse()
+            if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                print(f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})")
+            else:
+                print(f"*** Call f_{fidx.x}({parameters})")
             return exec_function(
                 code2,
                 parameters,
@@ -847,7 +930,8 @@ def read_module(f: bytes) -> Module:
             print(f"Code section, {len(section.code)} entries")
         elif section_id == DATA_SECTION_ID:
             section = parse_data_section(contents)
-            print(f"Data section, {len(section.seg)} entries")
+            data_bytes = sum(len(x.b) for x in section.seg)
+            print(f"Data section, {len(section.seg)} entries, size {data_bytes} bytes")
         else:
             print(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
@@ -1449,12 +1533,11 @@ def read_i32(f: BinaryIO) -> int:
     b = f.read(1)[0]
     num = b & 0x7F
     while b & 0x80:
-        l += 1
+        l += 7
         b = f.read(1)[0]
-        num |= (b & 0x7F) << (7 * l)
+        num |= (b & 0x7F) << l
     if b & 0x40:
-        num = (-num) & ((1 << (7 * (l + 1) - 1)) - 1)
-        num = -num
+        num |= (-1) << (l+6)
     return num
 
 
