@@ -140,11 +140,12 @@ def init_module(mod: Module):
 
     imports = {
         "__memory_base": 1000000,
-        "__stack_pointer": 15000000,
-        "__heap_base": 10000000,
+        "__stack_pointer": 10000000,
+        "__table_base": 15000000,
+        "__heap_base": 20000000,
     }
     globals: list[Value] = []
-    mem = [0] * 20000000
+    mem = [0] * 40000000
     tables = []
     function_list = []
     function_names = []
@@ -250,6 +251,7 @@ def init_module(mod: Module):
         import_functions,
         function_names,
         element_section,
+        [],
     )
     print("*** Call(PyRun_SimpleString)")
     print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
@@ -273,6 +275,7 @@ def init_module(mod: Module):
         import_functions,
         function_names,
         element_section,
+        ["PyRun_SimpleString"],
     )
 
 
@@ -285,6 +288,10 @@ i64_sign = 0x8000000000000000
 
 def i32_to_u32(a: int) -> int:
     return a & i32_mask
+
+
+def i64_to_u64(a: int) -> int:
+    return a & i64_mask
 
 
 def i64_to_u64(a: int) -> int:
@@ -338,6 +345,10 @@ def i32_shr_u(a: int, b: int) -> int:
     return (a & i32_mask) >> b
 
 
+def i64_shr_u(a: int, b: int) -> int:
+    return (a & i64_mask) >> b
+
+
 def i32_shr_s(a: int, b: int) -> int:
     return (i32_to_s32(a) >> b) & i32_mask
 
@@ -385,10 +396,11 @@ def exec_instruction(
     import_functions: list[ImportFunction],
     function_names: list[str],
     element_section: ElementSection,
+    call_stack: list[str],
 ) -> Optional[Jump]:
     global global_counter
     print(
-        f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}"
+        f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
     )
     global_counter += 1
     # if global_counter > 4876:
@@ -535,6 +547,10 @@ def exec_instruction(
         b = stack.pop()
         a = stack.pop()
         stack.append(Value(i32_shr_s(a.val, b.val), ValType.I32))
+    elif inst.opcode == Opcode.i64_shr_u:
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(Value(i64_shr_u(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_eq:
         b = stack.pop()
         a = stack.pop()
@@ -559,6 +575,13 @@ def exec_instruction(
         else:
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_eqz:
+        a = stack.pop()
+        print(f"  eqz? {a.val} -> {a.val == 0}")
+        if a.val == 0:
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i64_eqz:
         a = stack.pop()
         print(f"  eqz? {a.val} -> {a.val == 0}")
         if a.val == 0:
@@ -593,6 +616,13 @@ def exec_instruction(
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i64_gt_u:
+        b = stack.pop()
+        a = stack.pop()
+        if i64_to_u64(a.val) > i64_to_u64(b.val):
+            stack.append(Value(1, ValType.I32))
+        else:
+            stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_ge_u:
         b = stack.pop()
         a = stack.pop()
@@ -623,6 +653,9 @@ def exec_instruction(
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
+    elif inst.opcode == Opcode.i32_wrap_i64:
+        a = stack.pop()
+        stack.append(Value(a.val & i32_mask, ValType.I32))
     elif inst.opcode == Opcode.select:
         c = stack.pop()
         b = stack.pop()
@@ -671,6 +704,7 @@ def exec_instruction(
                     import_functions,
                     function_names,
                     element_section,
+                    call_stack,
                 )
                 if j is not None:
                     if j.label == -1:
@@ -694,6 +728,7 @@ def exec_instruction(
                     import_functions,
                     function_names,
                     element_section,
+                    call_stack,
                 )
                 if j is not None:
                     if j.label == -1:
@@ -719,6 +754,7 @@ def exec_instruction(
                 import_functions,
                 function_names,
                 element_section,
+                call_stack,
             )
             if j is not None:
                 if j.label == -1:
@@ -744,6 +780,7 @@ def exec_instruction(
                     import_functions,
                     function_names,
                     element_section,
+                    call_stack,
                 )
                 if j is not None:
                     if j.label == -1:
@@ -772,8 +809,10 @@ def exec_instruction(
                 parameters.append(stack.pop())
             parameters.reverse()
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                fname = function_names[fidx.x]
                 print(f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})")
             else:
+                fname = f"f_{fidx.x}"
                 print(f"*** Call f_{fidx.x}({parameters})")
             return exec_function(
                 code2,
@@ -787,22 +826,24 @@ def exec_instruction(
                 import_functions,
                 function_names,
                 element_section,
+                call_stack + [fname]
             )
     elif inst.opcode == Opcode.call_indirect:
         # tidx = inst.operands[0].x
         # t = typ.function_types[tidx]
         table_idx = stack.pop().val
-        print(f"*** Call table idx {table_idx}")
+        print(f"*** Call indirect table idx {table_idx}")
         table = element_section.elemsec[0]
         fidx = table.y[table_idx]
-
         f = functions[fidx.x]
         if isinstance(f, ImportFunction):
             raise ValueError("Not supported yet: calling function %d" % fidx.x)
         else:
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                fname = function_names[fidx.x]
                 print(f"*** Call({function_names[fidx.x]})")
             else:
+                fname = f"f_{fidx.x}"
                 print(f"*** Call(f_{fidx.x})")
             code2 = f.code
             parameter_types = f.parameter_types
@@ -825,6 +866,7 @@ def exec_instruction(
                 import_functions,
                 function_names,
                 element_section,
+                call_stack + [fname]
             )
     elif inst.opcode == Opcode.return_:
         return Jump(-1)
@@ -847,6 +889,7 @@ def exec_function(
     import_functions: list[ImportFunction],
     function_names: list[str],
     element_section: ElementSection,
+    call_stack: list[str],
 ) -> Optional[Jump]:
     locals = []
     for i in range(len(parameters)):
@@ -869,6 +912,7 @@ def exec_function(
             import_functions,
             function_names,
             element_section,
+            call_stack,
         )
         if j is not None:
             if j.label == -1:
@@ -880,7 +924,8 @@ def exec_function(
         last = "?"
     else:
         last = stack[-1]
-    print(f"*** Return: {last}")
+    fname = call_stack[-1] if call_stack else ""
+    print(f"*** ({fname}) Return: {last}")
 
 
 def read_module(f: bytes) -> Module:
