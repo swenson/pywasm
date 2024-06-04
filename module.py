@@ -7,6 +7,11 @@ import struct
 import io
 import time
 
+import argparse
+
+global DEBUG
+DEBUG = False
+
 # necessary for large function parsing
 sys.setrecursionlimit(100000)
 
@@ -104,7 +109,8 @@ class WasmFunction:
 
 
 def init_module(mod: Module):
-    print("Initializing module")
+    if DEBUG:
+        print("Initializing module")
     start: StartSection = None
     functions: FunctionSection = None
     code: CodeSection = None
@@ -137,7 +143,6 @@ def init_module(mod: Module):
     if start is None:
         exit("No start section found")
 
-
     imports = {
         "__memory_base": 1000000,
         "__stack_pointer": 10000000,
@@ -154,12 +159,14 @@ def init_module(mod: Module):
             if isinstance(imp.d, TypeIdx):
                 # TODO: patch in functions from this file into here
                 function_list.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
-                print(f"import function {imp.mod}.{imp.nm}")
+                if DEBUG:
+                    print(f"import function {imp.mod}.{imp.nm}")
                 function_names.append(f"{imp.mod}.{imp.nm}")
             elif isinstance(imp.d, GlobalType):
                 # TODO: patch in globals from here
                 val = imports.get(imp.nm, 0)
-                print(f"globals[{len(globals)}] = import {imp.nm} = {val}")
+                if DEBUG:
+                    print(f"globals[{len(globals)}] = import {imp.nm} = {val}")
                 globals.append(Value(val, imp.d.t))
             elif isinstance(imp.d, MemType):
                 if len(mem) < imp.d.lim.n:
@@ -182,7 +189,8 @@ def init_module(mod: Module):
             Opcode.f64_const,
         )
         arg = op.operands[0]
-        print(f"globals[{len(globals)}] = {arg}")
+        if DEBUG:
+            print(f"globals[{len(globals)}] = {arg}")
         if op.opcode == Opcode.i32_const:
             globals.append(Value(arg, ValType.I32))
         elif op.opcode == Opcode.i64_const:
@@ -201,14 +209,16 @@ def init_module(mod: Module):
         assert expr.instructions[0].opcode == Opcode.global_get
         assert expr.instructions[1].opcode == Opcode.end
         idx = globals[expr.instructions[0].operands[0]].val
-        print(f"Initializing data memidx={memidx}, offset={idx}")
+        if DEBUG:
+            print(f"Initializing data memidx={memidx}, offset={idx}")
         if len(mem) < idx + len(b):
             needed = idx + len(b) - len(mem)
             mem.extend([0] * needed)
         for i in range(idx, idx + len(b)):
             mem[i] = b[i - idx]
 
-    print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
+    if DEBUG:
+        print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
     import_len = len(function_names)
     for i in range(len(functions.funcs)):
         function_list.append(
@@ -253,16 +263,18 @@ def init_module(mod: Module):
         element_section,
         [],
     )
-    print("*** Call(PyRun_SimpleString)")
-    print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
-    print(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
-    print(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
+    if DEBUG:
+        print("*** Call(PyRun_SimpleString)")
+        print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
+        print(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
+        print(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
     x = exports["PyRun_SimpleString"].x
     parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
     ptr = len(mem)
     mem.extend('print("abc")\0')
     parameters[0] = Value(ptr, ValType.I32)
-    print(f"Parameters: {parameters}")
+    if DEBUG:
+        print(f"Parameters: {parameters}")
     exec_function(
         function_list[x].code,
         parameters,
@@ -296,6 +308,7 @@ def i64_to_u64(a: int) -> int:
 
 def i64_to_u64(a: int) -> int:
     return a & i64_mask
+
 
 def i32_to_s32(a: int) -> int:
     a = i32_to_u32(a)
@@ -399,37 +412,42 @@ def exec_instruction(
     call_stack: list[str],
 ) -> Optional[Jump]:
     global global_counter
-    print(
-        f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
-    )
+    if DEBUG:
+        print(
+            f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
+        )
     global_counter += 1
     # if global_counter > 4876:
     #     input("> ")
     if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
         pass
     elif inst.opcode == Opcode.local_get:
-        print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
+        if DEBUG:
+            print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
         stack.append(locals[inst.operands[0]])
     elif inst.opcode == Opcode.i32_load:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
-        print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
+        if DEBUG:
+            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i64_load:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
-        print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
+        if DEBUG:
+            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.i64_store:
         offset = inst.operands[1]
         val = stack.pop().val & i64_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        print(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}")
+        if DEBUG:
+            print(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}")
         data = struct.pack("<Q", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store:
@@ -437,7 +455,8 @@ def exec_instruction(
         val = stack.pop().val & i32_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        print(f"Store 0x{addr:x} -> 0x{val:x}")
+        if DEBUG:
+            print(f"Store 0x{addr:x} -> 0x{val:x}")
         data = struct.pack("<I", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store8:
@@ -445,7 +464,8 @@ def exec_instruction(
         val = stack.pop().val & i8_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        print(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}")
+        if DEBUG:
+            print(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}")
         data = struct.pack("<B", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_load8_u:
@@ -453,7 +473,8 @@ def exec_instruction(
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
-        print(f"  load byte [0x{addr:x}] -> 0x{num:x}")
+        if DEBUG:
+            print(f"  load byte [0x{addr:x}] -> 0x{num:x}")
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load8_s:
         offset = inst.operands[1]
@@ -471,27 +492,32 @@ def exec_instruction(
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<H", bytes(mem[addr: addr + 2]))[0]
+        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
         locals[idx] = stack.pop()
-        print(f"  Set local: [{idx}] <- {locals[idx]}")
+        if DEBUG:
+            print(f"  Set local: [{idx}] <- {locals[idx]}")
     elif inst.opcode == Opcode.local_tee:
         idx = inst.operands[0]
         locals[idx] = stack[-1]
-        print(f"  tee locals[{idx}] = {stack[-1]}")
+        if DEBUG:
+            print(f"  tee locals[{idx}] = {stack[-1]}")
     elif inst.opcode == Opcode.global_get:
         idx = inst.operands[0]
-        print(f"  get globals[{idx}] => {globals[idx]}")
+        if DEBUG:
+            print(f"  get globals[{idx}] => {globals[idx]}")
         stack.append(globals[idx])
     elif inst.opcode == Opcode.global_set:
         idx = inst.operands[0]
         globals[idx] = stack.pop()
-        print(f"  set globals[{idx}] <= {globals[idx]}")
+        if DEBUG:
+            print(f"  set globals[{idx}] <= {globals[idx]}")
     elif inst.opcode == Opcode.i32_const:
         c = inst.operands[0]
-        print(f"  push 0x{c:x} ({inst})")
+        if DEBUG:
+            print(f"  push 0x{c:x} ({inst})")
         stack.append(Value(c, ValType.I32))
     elif inst.opcode == Opcode.i64_const:
         c = inst.operands[0]
@@ -499,32 +525,38 @@ def exec_instruction(
     elif inst.opcode == Opcode.i32_add:
         b = stack.pop()
         a = stack.pop()
-        print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
+        if DEBUG:
+            print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
         stack.append(Value(i32_add(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_sub:
         b = stack.pop()
         a = stack.pop()
-        print(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}")
+        if DEBUG:
+            print(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}")
         stack.append(Value(i32_add(a.val, -b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_mul:
         b = stack.pop()
         a = stack.pop()
-        print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
+        if DEBUG:
+            print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
         stack.append(Value(i32_mul(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_u:
         b = stack.pop()
         a = stack.pop()
-        print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
+        if DEBUG:
+            print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
         stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_s:
         b = stack.pop()
         a = stack.pop()
-        print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
+        if DEBUG:
+            print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
         stack.append(Value(i32_div_s(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_and:
         b = stack.pop()
         a = stack.pop()
-        print(f"  and: {a.val} & {b.val} -> {a.val & b.val}")
+        if DEBUG:
+            print(f"  and: {a.val} & {b.val} -> {a.val & b.val}")
         stack.append(Value(a.val & b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_or:
         b = stack.pop()
@@ -533,7 +565,8 @@ def exec_instruction(
     elif inst.opcode == Opcode.i32_xor:
         b = stack.pop()
         a = stack.pop()
-        print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
+        if DEBUG:
+            print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
         stack.append(Value(a.val ^ b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_shl:
         b = stack.pop()
@@ -562,10 +595,12 @@ def exec_instruction(
         b = i32_to_u32(stack.pop().val)
         a = i32_to_u32(stack.pop().val)
         if a <= b:
-            print(f"  le_u {a} <= {b} => True")
+            if DEBUG:
+                print(f"  le_u {a} <= {b} => True")
             stack.append(Value(1, ValType.I32))
         else:
-            print(f"  le_u {a} <= {b} => False")
+            if DEBUG:
+                print(f"  le_u {a} <= {b} => False")
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_lt_s:
         b = i32_to_s32(stack.pop().val)
@@ -576,14 +611,16 @@ def exec_instruction(
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_eqz:
         a = stack.pop()
-        print(f"  eqz? {a.val} -> {a.val == 0}")
+        if DEBUG:
+            print(f"  eqz? {a.val} -> {a.val == 0}")
         if a.val == 0:
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i64_eqz:
         a = stack.pop()
-        print(f"  eqz? {a.val} -> {a.val == 0}")
+        if DEBUG:
+            print(f"  eqz? {a.val} -> {a.val == 0}")
         if a.val == 0:
             stack.append(Value(1, ValType.I32))
         else:
@@ -627,10 +664,12 @@ def exec_instruction(
         b = stack.pop()
         a = stack.pop()
         if i32_to_u32(a.val) >= i32_to_u32(b.val):
-            print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
+            if DEBUG:
+                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
             stack.append(Value(1, ValType.I32))
         else:
-            print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
+            if DEBUG:
+                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_ge_s:
         b = stack.pop()
@@ -661,10 +700,12 @@ def exec_instruction(
         b = stack.pop()
         a = stack.pop()
         if c.val == 0:
-            print(f"  select({a}, {b}, {c}) -> {b}")
+            if DEBUG:
+                print(f"  select({a}, {b}, {c}) -> {b}")
             stack.append(b)
         else:
-            print(f"  select({a}, {b}, {c}) -> {a}")
+            if DEBUG:
+                print(f"  select({a}, {b}, {c}) -> {a}")
             stack.append(a)
     elif inst.opcode == Opcode.drop:
         stack.pop()
@@ -690,7 +731,8 @@ def exec_instruction(
         then = inst.operands[0]
         else_ = inst.operands[1]
         if stack.pop().val:
-            print("  if statement was true")
+            if DEBUG:
+                print("  if statement was true")
             for inst2 in then:
                 j = exec_instruction(
                     inst2,
@@ -714,7 +756,8 @@ def exec_instruction(
                     else:
                         return Jump(j.label - 1)
         elif else_:
-            print("  if statement was false and else was defined")
+            if DEBUG:
+                print("  if statement was false and else was defined")
             for inst2 in else_.instructions:
                 j = exec_instruction(
                     inst2,
@@ -738,7 +781,8 @@ def exec_instruction(
                     else:
                         return Jump(j.label - 1)
         else:
-            print("  if statement was false (but no else)")
+            if DEBUG:
+                print("  if statement was false (but no else)")
     elif inst.opcode == Opcode.block:
         block = inst.operands[0]
         for inst2 in block:
@@ -766,7 +810,8 @@ def exec_instruction(
     elif inst.opcode == Opcode.loop:
         block = inst.operands[0]
         while True:
-            print("*** begin loop")
+            if DEBUG:
+                print("*** begin loop")
             for inst2 in block:
                 j = exec_instruction(
                     inst2,
@@ -810,10 +855,14 @@ def exec_instruction(
             parameters.reverse()
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
                 fname = function_names[fidx.x]
-                print(f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})")
+                if DEBUG:
+                    print(
+                        f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
+                    )
             else:
                 fname = f"f_{fidx.x}"
-                print(f"*** Call f_{fidx.x}({parameters})")
+                if DEBUG:
+                    print(f"*** Call f_{fidx.x}({parameters})")
             return exec_function(
                 code2,
                 parameters,
@@ -826,13 +875,14 @@ def exec_instruction(
                 import_functions,
                 function_names,
                 element_section,
-                call_stack + [fname]
+                call_stack + [fname],
             )
     elif inst.opcode == Opcode.call_indirect:
         # tidx = inst.operands[0].x
         # t = typ.function_types[tidx]
         table_idx = stack.pop().val
-        print(f"*** Call indirect table idx {table_idx}")
+        if DEBUG:
+            print(f"*** Call indirect table idx {table_idx}")
         table = element_section.elemsec[0]
         fidx = table.y[table_idx]
         f = functions[fidx.x]
@@ -841,10 +891,12 @@ def exec_instruction(
         else:
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
                 fname = function_names[fidx.x]
-                print(f"*** Call({function_names[fidx.x]})")
+                if DEBUG:
+                    print(f"*** Call({function_names[fidx.x]})")
             else:
                 fname = f"f_{fidx.x}"
-                print(f"*** Call(f_{fidx.x})")
+                if DEBUG:
+                    print(f"*** Call(f_{fidx.x})")
             code2 = f.code
             parameter_types = f.parameter_types
             # type_idx = functions.funcs[fidx.x].x
@@ -866,14 +918,15 @@ def exec_instruction(
                 import_functions,
                 function_names,
                 element_section,
-                call_stack + [fname]
+                call_stack + [fname],
             )
     elif inst.opcode == Opcode.return_:
         return Jump(-1)
     else:
-        print(f"Locals: {locals}")
-        print(f"Stack: {stack}")
-        print(f"Current instruction: {inst}")
+        if DEBUG:
+            print(f"Locals: {locals}")
+            print(f"Stack: {stack}")
+            print(f"Current instruction: {inst}")
         raise (ValueError(f"Unknown instruction: {inst}"))
 
 
@@ -916,7 +969,8 @@ def exec_function(
         )
         if j is not None:
             if j.label == -1:
-                print("Return")
+                if DEBUG:
+                    print("Return")
                 break
             return j
         pc += 1
@@ -925,7 +979,8 @@ def exec_function(
     else:
         last = stack[-1]
     fname = call_stack[-1] if call_stack else ""
-    print(f"*** ({fname}) Return: {last}")
+    if DEBUG:
+        print(f"*** ({fname}) Return: {last}")
 
 
 def read_module(f: bytes) -> Module:
@@ -942,43 +997,60 @@ def read_module(f: bytes) -> Module:
         current += section_size
         if section_id == CUSTOM_SECTION_ID:
             section = parse_custom_section(contents)
-            print(f"Custom section name: {section.name}, length={len(section.bytes)}")
+            if DEBUG:
+                print(
+                    f"Custom section name: {section.name}, length={len(section.bytes)}"
+                )
         elif section_id == TYPE_SECTION_ID:
             section = parse_type_section(contents)
-            print(f"Type section, num functions = {len(section.function_types)}")
+            if DEBUG:
+                print(f"Type section, num functions = {len(section.function_types)}")
         elif section_id == IMPORT_SECTION_ID:
             section = parse_import_section(contents)
-            print(f"Import section, {len(section.imports)} imports")
+            if DEBUG:
+                print(f"Import section, {len(section.imports)} imports")
         elif section_id == FUNCTION_SECTION_ID:
             section = parse_function_section(contents)
-            print(f"Function section, {len(section.funcs)} functions")
+            if DEBUG:
+                print(f"Function section, {len(section.funcs)} functions")
         elif section_id == TABLE_SECTION_ID:
             section = parse_table_section(contents)
-            print(f"Table section, {section.tables}")
+            if DEBUG:
+                print(f"Table section, {section.tables}")
         elif section_id == MEMORY_SECTION_ID:
             section = parse_memory_section(contents)
-            print(f"Memory section, {section.memories}")
+            if DEBUG:
+                print(f"Memory section, {section.memories}")
         elif section_id == GLOBAL_SECTION_ID:
             section = parse_global_section(contents)
-            print(f"Global section, {len(section.globals)} globals")
+            if DEBUG:
+                print(f"Global section, {len(section.globals)} globals")
         elif section_id == EXPORT_SECTION_ID:
             section = parse_export_section(contents)
-            print(f"Export section, {len(section.exports)} exports")
+            if DEBUG:
+                print(f"Export section, {len(section.exports)} exports")
         elif section_id == START_SECTION_ID:
             section = parse_start_section(contents)
-            print(f"Start section, {section.start}")
+            if DEBUG:
+                print(f"Start section, {section.start}")
         elif section_id == ELEMENT_SECTION_ID:
             section = parse_element_section(contents)
-            print(f"Element section, {len(section.elemsec)} elements")
+            if DEBUG:
+                print(f"Element section, {len(section.elemsec)} elements")
         elif section_id == CODE_SECTION_ID:
             section = parse_code_section(contents)
-            print(f"Code section, {len(section.code)} entries")
+            if DEBUG:
+                print(f"Code section, {len(section.code)} entries")
         elif section_id == DATA_SECTION_ID:
             section = parse_data_section(contents)
             data_bytes = sum(len(x.b) for x in section.seg)
-            print(f"Data section, {len(section.seg)} entries, size {data_bytes} bytes")
+            if DEBUG:
+                print(
+                    f"Data section, {len(section.seg)} entries, size {data_bytes} bytes"
+                )
         else:
-            print(f"Section {section_id}, size = {section_size}")
+            if DEBUG:
+                print(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
         sections.append(section)
     return Module(sections)
@@ -1370,8 +1442,7 @@ def read_fc_subop(r: BinaryIO) -> Op:
     elif subop == 11:
         assert r.read(1)[0] == 0  # drop
     else:
-        print(f"Unknown subop for 0xfc: {subop}")
-        assert False
+        raise ValueError(f"Unknown subop for 0xfc: {subop}")
     return Op(0xFC, subop, operands)
 
 
@@ -1437,7 +1508,8 @@ def read_instruction(r: BinaryIO) -> Op:
     elif op == 0x44:
         n = read_f64(r)
         return Op(op, None, (n,))
-    print(f"op = {op:x}")
+    if DEBUG:
+        print(f"op = {op:x}")
     assert False
 
 
@@ -1582,7 +1654,7 @@ def read_i32(f: BinaryIO) -> int:
         b = f.read(1)[0]
         num |= (b & 0x7F) << l
     if b & 0x40:
-        num |= (-1) << (l+6)
+        num |= (-1) << (l + 6)
     return num
 
 
@@ -1599,6 +1671,12 @@ def read_f64(f: BinaryIO) -> float:
 
 
 if __name__ == "__main__":
-    with open(sys.argv[1], "rb") as fin:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("wasm_file", help="WASM file to execute")
+    parser.add_argument("--debug", help="Enable debug output", action="store_true")
+    args = parser.parse_args()
+    DEBUG = args.debug
+
+    with open(args.wasm_file, "rb") as fin:
         module = read_module(fin.read())
     init_module(module)
