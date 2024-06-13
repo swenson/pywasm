@@ -325,7 +325,6 @@ def i32_add(a: int, b: int) -> int:
         s = -(-s & i32_mask)
     return s
 
-
 def i32_mul(a: int, b: int) -> int:
     a = a & i32_mask
     b = b & i32_mask
@@ -411,10 +410,31 @@ def exec_instruction(
     element_section: ElementSection,
     call_stack: list[str],
 ) -> Optional[Jump]:
+    try:
+        return exec_instruction_inner(inst, locals, stack, globals, mem, functions, typ, codes, import_functions, function_names, element_section, call_stack)
+    except KeyboardInterrupt:
+        print(f"Stack trace: {call_stack}")
+        exit(1)
+
+
+def exec_instruction_inner(
+    inst: "Op",
+    locals: list[Value],
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    functions: list[ImportFunction | WasmFunction],
+    typ: TypeSection,
+    codes: CodeSection,
+    import_functions: list[ImportFunction],
+    function_names: list[str],
+    element_section: ElementSection,
+    call_stack: list[str],
+) -> Optional[Jump]:
     global global_counter
     if DEBUG:
         print(
-            f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
+            f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack[-1:])}]"
         )
     global_counter += 1
     # if global_counter > 4876:
@@ -474,7 +494,7 @@ def exec_instruction(
         addr = base_addr + offset
         num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
         if DEBUG:
-            print(f"  load byte [0x{addr:x}] -> 0x{num:x}")
+            print(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}")
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load8_s:
         offset = inst.operands[1]
@@ -723,9 +743,15 @@ def exec_instruction(
         x = stack.pop()
         labels = inst.operands[0]
         default = inst.operands[1]
+        if DEBUG:
+            print(f"  br_table labels={labels} default={default} val={x.val}")
         if 0 <= x.val < len(labels):
+            if DEBUG:
+                print(f"  br_table taking label {labels[x.val]} -> {labels[x.val].x}")
             return Jump(labels[x.val].x)
         else:
+            if DEBUG:
+                print(f"  br_table taking default")
             return Jump(default.x)
     elif inst.opcode == Opcode.if_:
         then = inst.operands[0]
@@ -1465,7 +1491,7 @@ def read_instruction(r: BinaryIO) -> Op:
         bt = r.read(1)[0]
         assert bt == 0x40 or 0x7C <= bt <= 0x7F
         expr = read_expr(r).instructions
-        return Op(op, None, (expr,))
+        return Op(op, bt, (expr,))
     elif op == 0x04:
         bt = r.read(1)[0]
         assert bt == 0x40 or 0x7C <= bt <= 0x7F
@@ -1473,7 +1499,7 @@ def read_instruction(r: BinaryIO) -> Op:
         else_ = None
         if then[-1].opcode == Opcode.else_:
             else_ = read_expr(r)
-        return Op(op, None, (then, else_))
+        return Op(op, bt, (then, else_))
     elif op == 0xC or op == 0xD:
         label = LabelIdx(read_u32(r))
         return Op(op, None, (label,))
