@@ -54,6 +54,223 @@ Func = namedtuple("Func", ["t", "e"])
 Locals = namedtuple("Locals", ["n", "t"])
 Data = namedtuple("Data", ["x", "e", "b"])
 
+CodeLocation = namedtuple("CodeLocation", ["fi", "ii"])
+
+class Opcode(IntEnum):
+    unreachable = 0x00
+    nop = 0x01
+    block = 0x02
+    loop = 0x03
+    if_ = 0x04
+    else_ = 0x05
+    end = 0x0B
+    br = 0x0C
+    br_if = 0x0D
+    br_table = 0x0E
+    return_ = 0x0F
+    call = 0x10
+    call_indirect = 0x11
+    ref_null = 0xD0
+    ref_is_null = 0xD1
+    ref_func = 0xD2
+    drop = 0x1A
+    select = 0x1B
+    select_vec = 0x1C
+    local_get = 0x20
+    local_set = 0x21
+    local_tee = 0x22
+    global_get = 0x23
+    global_set = 0x24
+    table_get = 0x25
+    table_set = 0x26
+    i32_load = 0x28
+    i64_load = 0x29
+    f32_load = 0x2A
+    f64_load = 0x2B
+    i32_load8_s = 0x2C
+    i32_load8_u = 0x2D
+    i32_load16_s = 0x2E
+    i32_load16_u = 0x2F
+    i64_load8_s = 0x30
+    i64_load8_u = 0x31
+    i64_load16_s = 0x32
+    i64_load16_u = 0x33
+    i64_load32_s = 0x34
+    i64_load32_u = 0x35
+    i32_store = 0x36
+    i64_store = 0x37
+    f32_store = 0x38
+    f64_store = 0x39
+    i32_store8 = 0x3A
+    i32_store16 = 0x3B
+    i64_store8 = 0x3C
+    i64_store16 = 0x3D
+    i64_store32 = 0x3E
+    memory_size = 0x3F
+    memory_grow = 0x40
+    i32_const = 0x41
+    i64_const = 0x42
+    f32_const = 0x43
+    f64_const = 0x44
+
+    i32_eqz = 0x45
+    i32_eq = 0x46
+    i32_ne = 0x47
+    i32_lt_s = 0x48
+    i32_lt_u = 0x49
+    i32_gt_s = 0x4A
+    i32_gt_u = 0x4B
+    i32_le_s = 0x4C
+    i32_le_u = 0x4D
+    i32_ge_s = 0x4E
+    i32_ge_u = 0x4F
+    i64_eqz = 0x50
+    i64_eq = 0x51
+    i64_ne = 0x52
+    i64_lt_s = 0x53
+    i64_lt_u = 0x54
+    i64_gt_s = 0x55
+    i64_gt_u = 0x56
+    i64_le_s = 0x57
+    i64_le_u = 0x58
+    i64_ge_s = 0x59
+    i64_ge_u = 0x5A
+    f32_eq = 0x5B
+    f32_ne = 0x5C
+    f32_lt = 0x5D
+    f32_gt = 0x5E
+    f32_le = 0x5F
+    f32_ge = 0x60
+    f64_eq = 0x61
+    f64_ne = 0x62
+    f64_lt = 0x63
+    f64_gt = 0x64
+    f64_le = 0x65
+    f64_ge = 0x66
+    i32_clz = 0x67
+    i32_ctz = 0x68
+    i32_popcnt = 0x69
+    i32_add = 0x6A
+    i32_sub = 0x6B
+    i32_mul = 0x6C
+    i32_div_s = 0x6D
+    i32_div_u = 0x6E
+    i32_rem_s = 0x6F
+    i32_rem_u = 0x70
+    i32_and = 0x71
+    i32_or = 0x72
+    i32_xor = 0x73
+    i32_shl = 0x74
+    i32_shr_s = 0x75
+    i32_shr_u = 0x76
+    i32_rotl = 0x77
+    i32_rotr = 0x78
+    i64_clz = 0x79
+    i64_ctz = 0x7A
+    i64_popcnt = 0x7B
+    i64_add = 0x7C
+    i64_sub = 0x7D
+    i64_mul = 0x7E
+    i64_div_s = 0x7F
+    i64_div_u = 0x80
+    i64_rem_s = 0x81
+    i64_rem_u = 0x82
+    i64_and = 0x83
+    i64_or = 0x84
+    i64_xor = 0x85
+    i64_shl = 0x86
+    i64_shr_s = 0x87
+    i64_shr_u = 0x88
+    i64_rotl = 0x89
+    i64_rotr = 0x8A
+    f32_abs = 0x8B
+    f32_neg = 0x8C
+    f32_ceil = 0x8D
+    f32_floor = 0x8E
+    f32_trunc = 0x8F
+    f32_nearest = 0x90
+    f32_sqrt = 0x91
+    f32_add = 0x92
+    f32_sub = 0x93
+    f32_mul = 0x94
+    f32_div = 0x95
+    f32_min = 0x96
+    f32_max = 0x97
+    f32_copysign = 0x98
+    f64_abs = 0x99
+    f64_neg = 0x9A
+    f64_ceil = 0x9B
+    f64_floor = 0x9C
+    f64_trunc = 0x9D
+    f64_nearest = 0x9E
+    f64_sqrt = 0x9F
+    f64_add = 0xA0
+    f64_sub = 0xA1
+    f64_mul = 0xA2
+    f64_div = 0xA3
+    f64_min = 0xA4
+    f64_max = 0xA5
+    f64_copysign = 0xA6
+    i32_wrap_i64 = 0xA7
+    i32_trunc_f32_s = 0xA8
+    i32_trunc_f32_u = 0xA9
+    i32_trunc_f64_s = 0xAA
+    i32_trunc_f64_u = 0xAB
+    i64_extend_i32_s = 0xAC
+    i64_extend_i32_u = 0xAD
+    i64_trunc_f32_s = 0xAE
+    i64_trunc_f32_u = 0xAF
+    i64_trunc_f64_s = 0xB0
+    i64_trunc_f64_u = 0xB1
+    f32_convert_i32_s = 0xB2
+    f32_convert_i32_u = 0xB3
+    f32_convert_i64_s = 0xB4
+    f32_convert_i64_u = 0xB5
+    f32_demote_f64 = 0xB6
+    f64_convert_i32_s = 0xB7
+    f64_convert_i32_u = 0xB8
+    f64_convert_i64_s = 0xB9
+    f64_convert_i64_u = 0xBA
+    f64_promote_f32 = 0xBB
+    i32_reinterpret_f32 = 0xBC
+    i64_reinterpret_f64 = 0xBD
+    f32_reinterpret_i32 = 0xBE
+    f64_reinterpret_i64 = 0xBF
+    i32_extend8_s = 0xC0
+    i32_extend16_s = 0xC1
+    i64_extend8_s = 0xC2
+    i64_extend16_s = 0xC3
+    i64_extend32_s = 0xC4
+
+    ext_fc = 0xFC
+    ext_fd = 0xFD
+
+
+class FCSubOp(IntEnum):
+    i32_trunc_sat_f32_s = 0
+    i32_trunc_sat_f32_u = 1
+    i32_trunc_sat_f64_s = 2
+    i32_trunc_sat_f64_u = 3
+    i64_trunc_sat_f32_s = 4
+    i64_trunc_sat_f32_u = 5
+    i64_trunc_sat_f64_s = 6
+    i64_trunc_sat_f64_u = 7
+    memory_init = 8
+    data_drop = 9
+    memory_copy = 10
+    memory_fill = 11
+    table_init = 12
+    elem_drop = 13
+    table_copy = 14
+    table_grow = 15
+    table_size = 16
+    table_fill = 17
+
+
+class FDSubOp(IntEnum):
+    pass
+
+
 CUSTOM_SECTION_ID = 0
 TYPE_SECTION_ID = 1
 IMPORT_SECTION_ID = 2
@@ -81,6 +298,10 @@ default_values = {
     ValType.F32: 0.0,
     ValType.F64: 0.0,
 }
+
+class Label:
+    def __init__(self):
+        pass
 
 
 class Value:
@@ -249,20 +470,26 @@ def init_module(mod: Module):
         for t in function_list[start.start.x].parameter_types
     ]
     stack = []
-    exec_function(
-        function_list[start.start.x].code,
-        parameters,
-        stack,
-        globals,
-        mem,
-        function_list,
-        typ,
-        code,
-        import_functions,
-        function_names,
-        element_section,
-        [],
-    )
+
+    wasm = WASM(stack, globals, mem, function_list, typ, code, import_functions, function_names, element_section)
+    wasm.run_function(start.start.x)
+
+    #run(CodeLocation(start.start.x, 0))
+
+    # exec_function(
+    #     function_list[start.start.x].code,
+    #     parameters,
+    #     stack,
+    #     globals,
+    #     mem,
+    #     function_list,
+    #     typ,
+    #     code,
+    #     import_functions,
+    #     function_names,
+    #     element_section,
+    #     [],
+    # )
     if DEBUG:
         print("*** Call(PyRun_SimpleString)")
         print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
@@ -275,20 +502,23 @@ def init_module(mod: Module):
     parameters[0] = Value(ptr, ValType.I32)
     if DEBUG:
         print(f"Parameters: {parameters}")
-    exec_function(
-        function_list[x].code,
-        parameters,
-        stack,
-        globals,
-        mem,
-        function_list,
-        typ,
-        code,
-        import_functions,
-        function_names,
-        element_section,
-        ["PyRun_SimpleString"],
-    )
+
+    wasm.run_function(exports["PyRun_SimpleString"].x, parameters)
+
+    # exec_function(
+    #     function_list[x].code,
+    #     parameters,
+    #     stack,
+    #     globals,
+    #     mem,
+    #     function_list,
+    #     typ,
+    #     code,
+    #     import_functions,
+    #     function_names,
+    #     element_section,
+    #     ["PyRun_SimpleString"],
+    # )
 
 
 i64_mask = 0xFFFFFFFFFFFFFFFF
@@ -395,449 +625,1102 @@ def mem_write(mem: list[int], addr: int, data: bytes):
     for i in range(len(data)):
         mem[addr + i] = data[i]
 
+# def exec_function(
+#     code: Func,
+#     parameters: list[Value],
+#     stack: list[Value|Label],
+#     globals: list[Value],
+#     mem: list[int],
+#     functions: list[ImportFunction | WasmFunction],
+#     typ: TypeSection,
+#     codes: CodeSection,
+#     import_functions: list[ImportFunction],
+#     function_names: list[str],
+#     element_section: ElementSection,
+#     call_stack: list[str],
+# ) -> Optional[Jump]:
+#     locals = []
+#     for i in range(len(parameters)):
+#         locals.append(parameters[i])
+#     for local_type in code.t:
+#         for i in range(local_type.n):
+#             locals.append(Value(default_values[local_type.t], local_type.t))
+#     instructions = code.e.instructions
+#     pc = 0
+#     while pc < len(instructions):
+#         j = exec_instruction(
+#             instructions[pc],
+#             locals,
+#             stack,
+#             globals,
+#             mem,
+#             functions,
+#             typ,
+#             codes,
+#             import_functions,
+#             function_names,
+#             element_section,
+#             call_stack,
+#         )
+#         if j is not None:
+#             if j.label == -1:
+#                 if DEBUG:
+#                     print("Return")
+#                 break
+#             return j
+#         pc += 1
+#     if len(stack) == 0:
+#         last = "?"
+#     else:
+#         last = stack[-1]
+#     fname = call_stack[-1] if call_stack else ""
+#     if DEBUG:
+#         print(f"*** ({fname}) Return: {last}")
 
-def exec_instruction(
-    inst: "Op",
-    locals: list[Value],
-    stack: list[Value],
-    globals: list[Value],
-    mem: list[int],
-    functions: list[ImportFunction | WasmFunction],
-    typ: TypeSection,
-    codes: CodeSection,
-    import_functions: list[ImportFunction],
-    function_names: list[str],
-    element_section: ElementSection,
-    call_stack: list[str],
-) -> Optional[Jump]:
-    try:
-        return exec_instruction_inner(inst, locals, stack, globals, mem, functions, typ, codes, import_functions, function_names, element_section, call_stack)
-    except KeyboardInterrupt:
-        print(f"Stack trace: {call_stack}")
-        exit(1)
 
+Return = "return"
 
-def exec_instruction_inner(
-    inst: "Op",
-    locals: list[Value],
-    stack: list[Value],
-    globals: list[Value],
-    mem: list[int],
-    functions: list[ImportFunction | WasmFunction],
-    typ: TypeSection,
-    codes: CodeSection,
-    import_functions: list[ImportFunction],
-    function_names: list[str],
-    element_section: ElementSection,
-    call_stack: list[str],
-) -> Optional[Jump]:
-    global global_counter
-    if DEBUG:
-        print(
-            f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack[-1:])}]"
-        )
-    global_counter += 1
-    # if global_counter > 4876:
-    #     input("> ")
-    if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
-        pass
-    elif inst.opcode == Opcode.local_get:
-        if DEBUG:
-            print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
-        stack.append(locals[inst.operands[0]])
-    elif inst.opcode == Opcode.i32_load:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
-        if DEBUG:
-            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
-        stack.append(Value(num, ValType.I32))
-    elif inst.opcode == Opcode.i64_load:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
-        if DEBUG:
-            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
-        stack.append(Value(num, ValType.I64))
-    elif inst.opcode == Opcode.i64_store:
-        offset = inst.operands[1]
-        val = stack.pop().val & i64_mask
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}")
-        data = struct.pack("<Q", val)
-        mem_write(mem, addr, data)
-    elif inst.opcode == Opcode.i32_store:
-        offset = inst.operands[1]
-        val = stack.pop().val & i32_mask
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> 0x{val:x}")
-        data = struct.pack("<I", val)
-        mem_write(mem, addr, data)
-    elif inst.opcode == Opcode.i32_store8:
-        offset = inst.operands[1]
-        val = stack.pop().val & i8_mask
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}")
-        data = struct.pack("<B", val)
-        mem_write(mem, addr, data)
-    elif inst.opcode == Opcode.i32_load8_u:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
-        if DEBUG:
-            print(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}")
-        stack.append(Value(num, ValType.I32))
-    elif inst.opcode == Opcode.i32_load8_s:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<b", bytes(mem[addr : addr + 1]))[0]
-        stack.append(Value(num, ValType.I32))
-    elif inst.opcode == Opcode.i32_load16_u:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
-        stack.append(Value(num, ValType.I32))
-    elif inst.opcode == Opcode.i64_load32_u:
-        offset = inst.operands[1]
-        base_addr = stack.pop().val & i32_mask
-        addr = base_addr + offset
-        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
-        stack.append(Value(num, ValType.I64))
-    elif inst.opcode == Opcode.local_set:
-        idx = inst.operands[0]
-        locals[idx] = stack.pop()
-        if DEBUG:
-            print(f"  Set local: [{idx}] <- {locals[idx]}")
-    elif inst.opcode == Opcode.local_tee:
-        idx = inst.operands[0]
-        locals[idx] = stack[-1]
-        if DEBUG:
-            print(f"  tee locals[{idx}] = {stack[-1]}")
-    elif inst.opcode == Opcode.global_get:
-        idx = inst.operands[0]
-        if DEBUG:
-            print(f"  get globals[{idx}] => {globals[idx]}")
-        stack.append(globals[idx])
-    elif inst.opcode == Opcode.global_set:
-        idx = inst.operands[0]
-        globals[idx] = stack.pop()
-        if DEBUG:
-            print(f"  set globals[{idx}] <= {globals[idx]}")
-    elif inst.opcode == Opcode.i32_const:
-        c = inst.operands[0]
-        if DEBUG:
-            print(f"  push 0x{c:x} ({inst})")
-        stack.append(Value(c, ValType.I32))
-    elif inst.opcode == Opcode.i64_const:
-        c = inst.operands[0]
-        stack.append(Value(c, ValType.I64))
-    elif inst.opcode == Opcode.i32_add:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
-        stack.append(Value(i32_add(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_sub:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}")
-        stack.append(Value(i32_add(a.val, -b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_mul:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
-        stack.append(Value(i32_mul(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_div_u:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
-        stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_div_s:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
-        stack.append(Value(i32_div_s(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_and:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  and: {a.val} & {b.val} -> {a.val & b.val}")
-        stack.append(Value(a.val & b.val, ValType.I32))
-    elif inst.opcode == Opcode.i32_or:
-        b = stack.pop()
-        a = stack.pop()
-        stack.append(Value(a.val | b.val, ValType.I32))
-    elif inst.opcode == Opcode.i32_xor:
-        b = stack.pop()
-        a = stack.pop()
-        if DEBUG:
-            print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
-        stack.append(Value(a.val ^ b.val, ValType.I32))
-    elif inst.opcode == Opcode.i32_shl:
-        b = stack.pop()
-        a = stack.pop()
-        stack.append(Value(i32_shl(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_shr_u:
-        b = stack.pop()
-        a = stack.pop()
-        stack.append(Value(i32_shr_u(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_shr_s:
-        b = stack.pop()
-        a = stack.pop()
-        stack.append(Value(i32_shr_s(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i64_shr_u:
-        b = stack.pop()
-        a = stack.pop()
-        stack.append(Value(i64_shr_u(a.val, b.val), ValType.I32))
-    elif inst.opcode == Opcode.i32_eq:
-        b = stack.pop()
-        a = stack.pop()
-        if a.val == b.val:
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_le_u:
-        b = i32_to_u32(stack.pop().val)
-        a = i32_to_u32(stack.pop().val)
-        if a <= b:
-            if DEBUG:
-                print(f"  le_u {a} <= {b} => True")
-            stack.append(Value(1, ValType.I32))
-        else:
-            if DEBUG:
-                print(f"  le_u {a} <= {b} => False")
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_lt_s:
-        b = i32_to_s32(stack.pop().val)
-        a = i32_to_s32(stack.pop().val)
-        if a < b:
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_eqz:
-        a = stack.pop()
-        if DEBUG:
-            print(f"  eqz? {a.val} -> {a.val == 0}")
-        if a.val == 0:
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i64_eqz:
-        a = stack.pop()
-        if DEBUG:
-            print(f"  eqz? {a.val} -> {a.val == 0}")
-        if a.val == 0:
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i64_ne:
-        b = stack.pop()
-        a = stack.pop()
-        if i64_to_u64(a.val) != i64_to_u64(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_ne:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_s32(a.val) != i32_to_s32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_lt_u:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_u32(a.val) < i32_to_u32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_gt_u:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_u32(a.val) > i32_to_u32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i64_gt_u:
-        b = stack.pop()
-        a = stack.pop()
-        if i64_to_u64(a.val) > i64_to_u64(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_ge_u:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_u32(a.val) >= i32_to_u32(b.val):
-            if DEBUG:
-                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
-            stack.append(Value(1, ValType.I32))
-        else:
-            if DEBUG:
-                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_ge_s:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_s32(a.val) >= i32_to_s32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_gt_s:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_s32(a.val) > i32_to_s32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_le_s:
-        b = stack.pop()
-        a = stack.pop()
-        if i32_to_s32(a.val) <= i32_to_s32(b.val):
-            stack.append(Value(1, ValType.I32))
-        else:
-            stack.append(Value(0, ValType.I32))
-    elif inst.opcode == Opcode.i32_wrap_i64:
-        a = stack.pop()
-        stack.append(Value(a.val & i32_mask, ValType.I32))
-    elif inst.opcode == Opcode.select:
-        c = stack.pop()
-        b = stack.pop()
-        a = stack.pop()
-        if c.val == 0:
-            if DEBUG:
-                print(f"  select({a}, {b}, {c}) -> {b}")
-            stack.append(b)
-        else:
-            if DEBUG:
-                print(f"  select({a}, {b}, {c}) -> {a}")
-            stack.append(a)
-    elif inst.opcode == Opcode.drop:
-        stack.pop()
-    elif inst.opcode == Opcode.memory_size:
-        stack.append(Value(len(mem) & i32_mask, ValType.I32))
-    elif inst.opcode == Opcode.br:
-        label = inst.operands[0].x
-        return Jump(label)
-    elif inst.opcode == Opcode.br_if:
-        x = stack.pop()
-        label = inst.operands[0].x
-        if x.val != 0:
-            return Jump(label)
-    elif inst.opcode == Opcode.br_table:
-        x = stack.pop()
-        labels = inst.operands[0]
-        default = inst.operands[1]
-        if DEBUG:
-            print(f"  br_table labels={labels} default={default} val={x.val}")
-        if 0 <= x.val < len(labels):
-            if DEBUG:
-                print(f"  br_table taking label {labels[x.val]} -> {labels[x.val].x}")
-            return Jump(labels[x.val].x)
-        else:
-            if DEBUG:
-                print(f"  br_table taking default")
-            return Jump(default.x)
-    elif inst.opcode == Opcode.if_:
-        then = inst.operands[0]
-        else_ = inst.operands[1]
-        if stack.pop().val:
-            if DEBUG:
-                print("  if statement was true")
-            for inst2 in then:
-                j = exec_instruction(
-                    inst2,
-                    locals,
-                    stack,
-                    globals,
-                    mem,
-                    functions,
-                    typ,
-                    codes,
-                    import_functions,
-                    function_names,
-                    element_section,
-                    call_stack,
-                )
-                if j is not None:
-                    if j.label == -1:
-                        return j
-                    elif j.label == 0:
-                        break
-                    else:
-                        return Jump(j.label - 1)
-        elif else_:
-            if DEBUG:
-                print("  if statement was false and else was defined")
-            for inst2 in else_.instructions:
-                j = exec_instruction(
-                    inst2,
-                    locals,
-                    stack,
-                    globals,
-                    mem,
-                    functions,
-                    typ,
-                    codes,
-                    import_functions,
-                    function_names,
-                    element_section,
-                    call_stack,
-                )
-                if j is not None:
-                    if j.label == -1:
-                        return j
-                    elif j.label == 0:
-                        break
-                    else:
-                        return Jump(j.label - 1)
-        else:
-            if DEBUG:
-                print("  if statement was false (but no else)")
-    elif inst.opcode == Opcode.block:
-        block = inst.operands[0]
-        for inst2 in block:
-            j = exec_instruction(
-                inst2,
-                locals,
-                stack,
-                globals,
-                mem,
-                functions,
-                typ,
-                codes,
-                import_functions,
-                function_names,
-                element_section,
-                call_stack,
-            )
-            if j is not None:
-                if j.label == -1:
-                    return j
-                elif j.label == 0:
-                    break
-                else:
-                    return Jump(j.label - 1)
-    elif inst.opcode == Opcode.loop:
-        block = inst.operands[0]
+class WASM:
+    def __init__(self,
+            stack: list[Value|Label],
+            globals: list[Value],
+            mem: list[int],
+            functions: list[ImportFunction | WasmFunction],
+            typ: TypeSection,
+            codes: CodeSection,
+            import_functions: list[ImportFunction],
+            function_names: list[str],
+            element_section: ElementSection):
+        self.stack = stack
+        self.globals = globals
+        self.mem = mem
+        self.functions = functions
+        self.typ = typ
+        self.codes = codes
+        self.import_functions = import_functions
+        self.function_names = function_names
+        self.element_section = element_section
+        self.call_stack: list[str] = []
+        self.locals_stack = []
+        self.pc = None
+        self.pc_stack = []
+
+    # @property
+    # def stack(self):
+    #     return self.stack
+
+    def run_function(self, x: int, parameters: Optional[list[Value]]=None):
+        self.pc = CodeLocation(x, 0)
+        code = self.functions[x].code
+        if parameters is None:
+            parameters = [Value(default_values[t], t) for t in self.functions[x].parameter_types]
+
+        locals = []
+        for i in range(len(parameters)):
+            locals.append(parameters[i])
+        for local_type in code.t:
+            for i in range(local_type.n):
+                locals.append(Value(default_values[local_type.t], local_type.t))
+
+        self.locals_stack.append(locals)
+        self.call_stack.append(self.function_names[x])
+        self.run()
+
+    def run(self):
         while True:
+            j = self.exec_instruction()
+            if j is not None:
+                if j == Return:
+                    if not self.pc_stack:
+                        return
+                    self.call_stack.pop()
+                    self.pc = self.pc_stack.pop()
+                    self.locals_stack.pop()
+                    continue
+
+                if j.label == -1:
+                    if DEBUG:
+                        print("Return")
+                    break
+                return j
+            self.pc = CodeLocation(self.pc[0], self.pc[1] + 1)
+        if len(self.stack) == 0:
+            last = "?"
+        else:
+            last = self.stack[-1]
+        fname = self.call_stack[-1] if self.call_stack else ""
+        if DEBUG:
+            print(f"*** ({fname}) Return: {last}")
+
+    def exec_instruction(self):
+        instructions = self.functions[self.pc.fi].code.e.instructions
+        if self.pc.ii >= len(instructions):
+            return Return
+
+        op = instructions[self.pc.ii]
+        return self.exec_instruction2(op)
+    def exec_instruction2(self,
+        inst: "Op",
+    ) -> Optional[Jump]:
+        try:
+            return self.exec_instruction_inner(inst)
+        except KeyboardInterrupt:
+            print(f"Stack trace: {self.call_stack}")
+            exit(1)
+
+    def exec_nop(self):
+        pass
+
+    def exec_global_get(self):
+        idx = self.inst.operands[0]
+        if DEBUG:
+            print(f"  get globals[{idx}] => {self.globals[idx]}")
+        self.stack.append(self.globals[idx])
+
+    def exec_i32_const(self):
+        c = self.inst.operands[0]
+        if DEBUG:
+            print(f"  push 0x{c:x} ({self.inst})")
+        self.stack.append(Value(c, ValType.I32))
+
+    def exec_unreachable(self):
+        pass
+    def exec_nop(self):
+        pass
+    def exec_block(self):
+        pass
+    def exec_loop(self):
+        pass
+    def exec_if_(self):
+        pass
+    def exec_br(self):
+        pass
+    def exec_br_if(self):
+        pass
+    def exec_br_table(self):
+        pass
+    def exec_return_(self):
+        pass
+    def exec_call(self):
+        pass
+    def exec_call_indirect(self):
+        pass
+    def exec_ref_null(self):
+        pass
+    def exec_ref_is_null(self):
+        pass
+    def exec_ref_func(self):
+        pass
+    def exec_drop(self):
+        pass
+    def exec_select(self):
+        pass
+    def exec_select_vec(self):
+        pass
+    def exec_local_get(self):
+        pass
+    def exec_local_set(self):
+        pass
+    def exec_local_tee(self):
+        pass
+    def exec_global_get(self):
+        pass
+    def exec_global_set(self):
+        pass
+    def exec_table_get(self):
+        pass
+    def exec_table_set(self):
+        pass
+    def exec_i32_load(self):
+        pass
+    def exec_i64_load(self):
+        pass
+    def exec_f32_load(self):
+        pass
+    def exec_f64_load(self):
+        pass
+    def exec_i32_load8_s(self):
+        pass
+    def exec_i32_load8_u(self):
+        pass
+    def exec_i32_load16_s(self):
+        pass
+    def exec_i32_load16_u(self):
+        pass
+    def exec_i64_load8_s(self):
+        pass
+    def exec_i64_load8_u(self):
+        pass
+    def exec_i64_load16_s(self):
+        pass
+    def exec_i64_load16_u(self):
+        pass
+    def exec_i64_load32_s(self):
+        pass
+    def exec_i64_load32_u(self):
+        pass
+    def exec_i32_store(self):
+        pass
+    def exec_i64_store(self):
+        pass
+    def exec_f32_store(self):
+        pass
+    def exec_f64_store(self):
+        pass
+    def exec_i32_store8(self):
+        pass
+    def exec_i32_store16(self):
+        pass
+    def exec_i64_store8(self):
+        pass
+    def exec_i64_store16(self):
+        pass
+    def exec_i64_store32(self):
+        pass
+    def exec_memory_size(self):
+        pass
+    def exec_memory_grow(self):
+        pass
+    def exec_i32_const(self):
+        pass
+    def exec_i64_const(self):
+        pass
+    def exec_f32_const(self):
+        pass
+    def exec_f64_const(self):
+        pass
+    def exec_i32_eqz(self):
+        pass
+    def exec_i32_eq(self):
+        pass
+    def exec_i32_ne(self):
+        pass
+    def exec_i32_lt_s(self):
+        pass
+    def exec_i32_lt_u(self):
+        pass
+    def exec_i32_gt_s(self):
+        pass
+    def exec_i32_gt_u(self):
+        pass
+    def exec_i32_le_s(self):
+        pass
+    def exec_i32_le_u(self):
+        pass
+    def exec_i32_ge_s(self):
+        pass
+    def exec_i32_ge_u(self):
+        pass
+    def exec_i64_eqz(self):
+        pass
+    def exec_i64_eq(self):
+        pass
+    def exec_i64_ne(self):
+        pass
+    def exec_i64_lt_s(self):
+        pass
+    def exec_i64_lt_u(self):
+        pass
+    def exec_i64_gt_s(self):
+        pass
+    def exec_i64_gt_u(self):
+        pass
+    def exec_i64_le_s(self):
+        pass
+    def exec_i64_le_u(self):
+        pass
+    def exec_i64_ge_s(self):
+        pass
+    def exec_i64_ge_u(self):
+        pass
+    def exec_f32_eq(self):
+        pass
+    def exec_f32_ne(self):
+        pass
+    def exec_f32_lt(self):
+        pass
+    def exec_f32_gt(self):
+        pass
+    def exec_f32_le(self):
+        pass
+    def exec_f32_ge(self):
+        pass
+    def exec_f64_eq(self):
+        pass
+    def exec_f64_ne(self):
+        pass
+    def exec_f64_lt(self):
+        pass
+    def exec_f64_gt(self):
+        pass
+    def exec_f64_le(self):
+        pass
+    def exec_f64_ge(self):
+        pass
+    def exec_i32_clz(self):
+        pass
+    def exec_i32_ctz(self):
+        pass
+    def exec_i32_popcnt(self):
+        pass
+    def exec_i32_add(self):
+        pass
+    def exec_i32_sub(self):
+        pass
+    def exec_i32_mul(self):
+        pass
+    def exec_i32_div_s(self):
+        pass
+    def exec_i32_div_u(self):
+        pass
+    def exec_i32_rem_s(self):
+        pass
+    def exec_i32_rem_u(self):
+        pass
+    def exec_i32_and(self):
+        pass
+    def exec_i32_or(self):
+        pass
+    def exec_i32_xor(self):
+        pass
+    def exec_i32_shl(self):
+        pass
+    def exec_i32_shr_s(self):
+        pass
+    def exec_i32_shr_u(self):
+        pass
+    def exec_i32_rotl(self):
+        pass
+    def exec_i32_rotr(self):
+        pass
+    def exec_i64_clz(self):
+        pass
+    def exec_i64_ctz(self):
+        pass
+    def exec_i64_popcnt(self):
+        pass
+    def exec_i64_add(self):
+        pass
+    def exec_i64_sub(self):
+        pass
+    def exec_i64_mul(self):
+        pass
+    def exec_i64_div_s(self):
+        pass
+    def exec_i64_div_u(self):
+        pass
+    def exec_i64_rem_s(self):
+        pass
+    def exec_i64_rem_u(self):
+        pass
+    def exec_i64_and(self):
+        pass
+    def exec_i64_or(self):
+        pass
+    def exec_i64_xor(self):
+        pass
+    def exec_i64_shl(self):
+        pass
+    def exec_i64_shr_s(self):
+        pass
+    def exec_i64_shr_u(self):
+        pass
+    def exec_i64_rotl(self):
+        pass
+    def exec_i64_rotr(self):
+        pass
+    def exec_f32_abs(self):
+        pass
+    def exec_f32_neg(self):
+        pass
+    def exec_f32_ceil(self):
+        pass
+    def exec_f32_floor(self):
+        pass
+    def exec_f32_trunc(self):
+        pass
+    def exec_f32_nearest(self):
+        pass
+    def exec_f32_sqrt(self):
+        pass
+    def exec_f32_add(self):
+        pass
+    def exec_f32_sub(self):
+        pass
+    def exec_f32_mul(self):
+        pass
+    def exec_f32_div(self):
+        pass
+    def exec_f32_min(self):
+        pass
+    def exec_f32_max(self):
+        pass
+    def exec_f32_copysign(self):
+        pass
+    def exec_f64_abs(self):
+        pass
+    def exec_f64_neg(self):
+        pass
+    def exec_f64_ceil(self):
+        pass
+    def exec_f64_floor(self):
+        pass
+    def exec_f64_trunc(self):
+        pass
+    def exec_f64_nearest(self):
+        pass
+    def exec_f64_sqrt(self):
+        pass
+    def exec_f64_add(self):
+        pass
+    def exec_f64_sub(self):
+        pass
+    def exec_f64_mul(self):
+        pass
+    def exec_f64_div(self):
+        pass
+    def exec_f64_min(self):
+        pass
+    def exec_f64_max(self):
+        pass
+    def exec_f64_copysign(self):
+        pass
+    def exec_i32_wrap_i64(self):
+        pass
+    def exec_i32_trunc_f32_s(self):
+        pass
+    def exec_i32_trunc_f32_u(self):
+        pass
+    def exec_i32_trunc_f64_s(self):
+        pass
+    def exec_i32_trunc_f64_u(self):
+        pass
+    def exec_i64_extend_i32_s(self):
+        pass
+    def exec_i64_extend_i32_u(self):
+        pass
+    def exec_i64_trunc_f32_s(self):
+        pass
+    def exec_i64_trunc_f32_u(self):
+        pass
+    def exec_i64_trunc_f64_s(self):
+        pass
+    def exec_i64_trunc_f64_u(self):
+        pass
+    def exec_f32_convert_i32_s(self):
+        pass
+    def exec_f32_convert_i32_u(self):
+        pass
+    def exec_f32_convert_i64_s(self):
+        pass
+    def exec_f32_convert_i64_u(self):
+        pass
+    def exec_f32_demote_f64(self):
+        pass
+    def exec_f64_convert_i32_s(self):
+        pass
+    def exec_f64_convert_i32_u(self):
+        pass
+    def exec_f64_convert_i64_s(self):
+        pass
+    def exec_f64_convert_i64_u(self):
+        pass
+    def exec_f64_promote_f32(self):
+        pass
+    def exec_i32_reinterpret_f32(self):
+        pass
+    def exec_i64_reinterpret_f64(self):
+        pass
+    def exec_f32_reinterpret_i32(self):
+        pass
+    def exec_f64_reinterpret_i64(self):
+        pass
+    def exec_i32_extend8_s(self):
+        pass
+    def exec_i32_extend16_s(self):
+        pass
+    def exec_i64_extend8_s(self):
+        pass
+    def exec_i64_extend16_s(self):
+        pass
+    def exec_i64_extend32_s(self):
+        pass
+    def exec_ext_fc(self):
+        pass
+    def exec_ext_fd(self):
+        pass
+
+    opcode_table = {
+        Opcode.else_: exec_nop,
+        Opcode.global_get: exec_global_get,
+        Opcode.i32_const: exec_i32_const,
+        Opcode.unreachable: exec_unreachable,
+        Opcode.nop: exec_nop,
+        Opcode.block: exec_block,
+        Opcode.loop: exec_loop,
+        Opcode.if_: exec_if_,
+        Opcode.else_: exec_nop,
+        Opcode.end: exec_nop,
+        Opcode.br: exec_br,
+        Opcode.br_if: exec_br_if,
+        Opcode.br_table: exec_br_table,
+        Opcode.return_: exec_return_,
+        Opcode.call: exec_call,
+        Opcode.call_indirect: exec_call_indirect,
+        Opcode.ref_null: exec_ref_null,
+        Opcode.ref_is_null: exec_ref_is_null,
+        Opcode.ref_func: exec_ref_func,
+        Opcode.drop: exec_drop,
+        Opcode.select: exec_select,
+        Opcode.select_vec: exec_select_vec,
+        Opcode.local_get: exec_local_get,
+        Opcode.local_set: exec_local_set,
+        Opcode.local_tee: exec_local_tee,
+        Opcode.global_get: exec_global_get,
+        Opcode.global_set: exec_global_set,
+        Opcode.table_get: exec_table_get,
+        Opcode.table_set: exec_table_set,
+        Opcode.i32_load: exec_i32_load,
+        Opcode.i64_load: exec_i64_load,
+        Opcode.f32_load: exec_f32_load,
+        Opcode.f64_load: exec_f64_load,
+        Opcode.i32_load8_s: exec_i32_load8_s,
+        Opcode.i32_load8_u: exec_i32_load8_u,
+        Opcode.i32_load16_s: exec_i32_load16_s,
+        Opcode.i32_load16_u: exec_i32_load16_u,
+        Opcode.i64_load8_s: exec_i64_load8_s,
+        Opcode.i64_load8_u: exec_i64_load8_u,
+        Opcode.i64_load16_s: exec_i64_load16_s,
+        Opcode.i64_load16_u: exec_i64_load16_u,
+        Opcode.i64_load32_s: exec_i64_load32_s,
+        Opcode.i64_load32_u: exec_i64_load32_u,
+        Opcode.i32_store: exec_i32_store,
+        Opcode.i64_store: exec_i64_store,
+        Opcode.f32_store: exec_f32_store,
+        Opcode.f64_store: exec_f64_store,
+        Opcode.i32_store8: exec_i32_store8,
+        Opcode.i32_store16: exec_i32_store16,
+        Opcode.i64_store8: exec_i64_store8,
+        Opcode.i64_store16: exec_i64_store16,
+        Opcode.i64_store32: exec_i64_store32,
+        Opcode.memory_size: exec_memory_size,
+        Opcode.memory_grow: exec_memory_grow,
+        Opcode.i32_const: exec_i32_const,
+        Opcode.i64_const: exec_i64_const,
+        Opcode.f32_const: exec_f32_const,
+        Opcode.f64_const: exec_f64_const,
+        Opcode.i32_eqz: exec_i32_eqz,
+        Opcode.i32_eq: exec_i32_eq,
+        Opcode.i32_ne: exec_i32_ne,
+        Opcode.i32_lt_s: exec_i32_lt_s,
+        Opcode.i32_lt_u: exec_i32_lt_u,
+        Opcode.i32_gt_s: exec_i32_gt_s,
+        Opcode.i32_gt_u: exec_i32_gt_u,
+        Opcode.i32_le_s: exec_i32_le_s,
+        Opcode.i32_le_u: exec_i32_le_u,
+        Opcode.i32_ge_s: exec_i32_ge_s,
+        Opcode.i32_ge_u: exec_i32_ge_u,
+        Opcode.i64_eqz: exec_i64_eqz,
+        Opcode.i64_eq: exec_i64_eq,
+        Opcode.i64_ne: exec_i64_ne,
+        Opcode.i64_lt_s: exec_i64_lt_s,
+        Opcode.i64_lt_u: exec_i64_lt_u,
+        Opcode.i64_gt_s: exec_i64_gt_s,
+        Opcode.i64_gt_u: exec_i64_gt_u,
+        Opcode.i64_le_s: exec_i64_le_s,
+        Opcode.i64_le_u: exec_i64_le_u,
+        Opcode.i64_ge_s: exec_i64_ge_s,
+        Opcode.i64_ge_u: exec_i64_ge_u,
+        Opcode.f32_eq: exec_f32_eq,
+        Opcode.f32_ne: exec_f32_ne,
+        Opcode.f32_lt: exec_f32_lt,
+        Opcode.f32_gt: exec_f32_gt,
+        Opcode.f32_le: exec_f32_le,
+        Opcode.f32_ge: exec_f32_ge,
+        Opcode.f64_eq: exec_f64_eq,
+        Opcode.f64_ne: exec_f64_ne,
+        Opcode.f64_lt: exec_f64_lt,
+        Opcode.f64_gt: exec_f64_gt,
+        Opcode.f64_le: exec_f64_le,
+        Opcode.f64_ge: exec_f64_ge,
+        Opcode.i32_clz: exec_i32_clz,
+        Opcode.i32_ctz: exec_i32_ctz,
+        Opcode.i32_popcnt: exec_i32_popcnt,
+        Opcode.i32_add: exec_i32_add,
+        Opcode.i32_sub: exec_i32_sub,
+        Opcode.i32_mul: exec_i32_mul,
+        Opcode.i32_div_s: exec_i32_div_s,
+        Opcode.i32_div_u: exec_i32_div_u,
+        Opcode.i32_rem_s: exec_i32_rem_s,
+        Opcode.i32_rem_u: exec_i32_rem_u,
+        Opcode.i32_and: exec_i32_and,
+        Opcode.i32_or: exec_i32_or,
+        Opcode.i32_xor: exec_i32_xor,
+        Opcode.i32_shl: exec_i32_shl,
+        Opcode.i32_shr_s: exec_i32_shr_s,
+        Opcode.i32_shr_u: exec_i32_shr_u,
+        Opcode.i32_rotl: exec_i32_rotl,
+        Opcode.i32_rotr: exec_i32_rotr,
+        Opcode.i64_clz: exec_i64_clz,
+        Opcode.i64_ctz: exec_i64_ctz,
+        Opcode.i64_popcnt: exec_i64_popcnt,
+        Opcode.i64_add: exec_i64_add,
+        Opcode.i64_sub: exec_i64_sub,
+        Opcode.i64_mul: exec_i64_mul,
+        Opcode.i64_div_s: exec_i64_div_s,
+        Opcode.i64_div_u: exec_i64_div_u,
+        Opcode.i64_rem_s: exec_i64_rem_s,
+        Opcode.i64_rem_u: exec_i64_rem_u,
+        Opcode.i64_and: exec_i64_and,
+        Opcode.i64_or: exec_i64_or,
+        Opcode.i64_xor: exec_i64_xor,
+        Opcode.i64_shl: exec_i64_shl,
+        Opcode.i64_shr_s: exec_i64_shr_s,
+        Opcode.i64_shr_u: exec_i64_shr_u,
+        Opcode.i64_rotl: exec_i64_rotl,
+        Opcode.i64_rotr: exec_i64_rotr,
+        Opcode.f32_abs: exec_f32_abs,
+        Opcode.f32_neg: exec_f32_neg,
+        Opcode.f32_ceil: exec_f32_ceil,
+        Opcode.f32_floor: exec_f32_floor,
+        Opcode.f32_trunc: exec_f32_trunc,
+        Opcode.f32_nearest: exec_f32_nearest,
+        Opcode.f32_sqrt: exec_f32_sqrt,
+        Opcode.f32_add: exec_f32_add,
+        Opcode.f32_sub: exec_f32_sub,
+        Opcode.f32_mul: exec_f32_mul,
+        Opcode.f32_div: exec_f32_div,
+        Opcode.f32_min: exec_f32_min,
+        Opcode.f32_max: exec_f32_max,
+        Opcode.f32_copysign: exec_f32_copysign,
+        Opcode.f64_abs: exec_f64_abs,
+        Opcode.f64_neg: exec_f64_neg,
+        Opcode.f64_ceil: exec_f64_ceil,
+        Opcode.f64_floor: exec_f64_floor,
+        Opcode.f64_trunc: exec_f64_trunc,
+        Opcode.f64_nearest: exec_f64_nearest,
+        Opcode.f64_sqrt: exec_f64_sqrt,
+        Opcode.f64_add: exec_f64_add,
+        Opcode.f64_sub: exec_f64_sub,
+        Opcode.f64_mul: exec_f64_mul,
+        Opcode.f64_div: exec_f64_div,
+        Opcode.f64_min: exec_f64_min,
+        Opcode.f64_max: exec_f64_max,
+        Opcode.f64_copysign: exec_f64_copysign,
+        Opcode.i32_wrap_i64: exec_i32_wrap_i64,
+        Opcode.i32_trunc_f32_s: exec_i32_trunc_f32_s,
+        Opcode.i32_trunc_f32_u: exec_i32_trunc_f32_u,
+        Opcode.i32_trunc_f64_s: exec_i32_trunc_f64_s,
+        Opcode.i32_trunc_f64_u: exec_i32_trunc_f64_u,
+        Opcode.i64_extend_i32_s: exec_i64_extend_i32_s,
+        Opcode.i64_extend_i32_u: exec_i64_extend_i32_u,
+        Opcode.i64_trunc_f32_s: exec_i64_trunc_f32_s,
+        Opcode.i64_trunc_f32_u: exec_i64_trunc_f32_u,
+        Opcode.i64_trunc_f64_s: exec_i64_trunc_f64_s,
+        Opcode.i64_trunc_f64_u: exec_i64_trunc_f64_u,
+        Opcode.f32_convert_i32_s: exec_f32_convert_i32_s,
+        Opcode.f32_convert_i32_u: exec_f32_convert_i32_u,
+        Opcode.f32_convert_i64_s: exec_f32_convert_i64_s,
+        Opcode.f32_convert_i64_u: exec_f32_convert_i64_u,
+        Opcode.f32_demote_f64: exec_f32_demote_f64,
+        Opcode.f64_convert_i32_s: exec_f64_convert_i32_s,
+        Opcode.f64_convert_i32_u: exec_f64_convert_i32_u,
+        Opcode.f64_convert_i64_s: exec_f64_convert_i64_s,
+        Opcode.f64_convert_i64_u: exec_f64_convert_i64_u,
+        Opcode.f64_promote_f32: exec_f64_promote_f32,
+        Opcode.i32_reinterpret_f32: exec_i32_reinterpret_f32,
+        Opcode.i64_reinterpret_f64: exec_i64_reinterpret_f64,
+        Opcode.f32_reinterpret_i32: exec_f32_reinterpret_i32,
+        Opcode.f64_reinterpret_i64: exec_f64_reinterpret_i64,
+        Opcode.i32_extend8_s: exec_i32_extend8_s,
+        Opcode.i32_extend16_s: exec_i32_extend16_s,
+        Opcode.i64_extend8_s: exec_i64_extend8_s,
+        Opcode.i64_extend16_s: exec_i64_extend16_s,
+        Opcode.i64_extend32_s: exec_i64_extend32_s,
+        Opcode.ext_fc: exec_ext_fc,
+        Opcode.ext_fd: exec_ext_fd,
+
+
+    }
+
+    def exec_instruction_inner(self,
+        inst: "Op",
+    ) -> Optional[Jump]:
+        global global_counter
+        if DEBUG:
+            print(
+                f"{global_counter} Executing {inst.opcode.name}, stack length {len(self.stack)}, memory length {len(self.mem)}, call stack [{','.join(self.call_stack[-1:])}]"
+            )
+        global_counter += 1
+        # if global_counter > 4876:
+        #     input("> ")
+        self.inst = inst
+        if inst.opcode not in self.opcode_table:
+            raise ValueError(f"Invalid opcode: {inst.opcode:02x}")
+        return self.opcode_table[inst.opcode](self)
+
+        if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
+            pass
+        elif inst.opcode == Opcode.local_get:
             if DEBUG:
-                print("*** begin loop")
+                print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
+            self.stack.append(locals[inst.operands[0]])
+        elif inst.opcode == Opcode.i32_load:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
+            if DEBUG:
+                print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
+            stack.append(Value(num, ValType.I32))
+        elif inst.opcode == Opcode.i64_load:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
+            if DEBUG:
+                print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
+            stack.append(Value(num, ValType.I64))
+        elif inst.opcode == Opcode.i64_store:
+            offset = inst.operands[1]
+            val = stack.pop().val & i64_mask
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            if DEBUG:
+                print(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}")
+            data = struct.pack("<Q", val)
+            mem_write(mem, addr, data)
+        elif inst.opcode == Opcode.i32_store:
+            offset = inst.operands[1]
+            val = stack.pop().val & i32_mask
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            if DEBUG:
+                print(f"Store 0x{addr:x} -> 0x{val:x}")
+            data = struct.pack("<I", val)
+            mem_write(mem, addr, data)
+        elif inst.opcode == Opcode.i32_store8:
+            offset = inst.operands[1]
+            val = stack.pop().val & i8_mask
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            if DEBUG:
+                print(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}")
+            data = struct.pack("<B", val)
+            mem_write(mem, addr, data)
+        elif inst.opcode == Opcode.i32_load8_u:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
+            if DEBUG:
+                print(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}")
+            stack.append(Value(num, ValType.I32))
+        elif inst.opcode == Opcode.i32_load8_s:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<b", bytes(mem[addr : addr + 1]))[0]
+            stack.append(Value(num, ValType.I32))
+        elif inst.opcode == Opcode.i32_load16_u:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
+            stack.append(Value(num, ValType.I32))
+        elif inst.opcode == Opcode.i64_load32_u:
+            offset = inst.operands[1]
+            base_addr = stack.pop().val & i32_mask
+            addr = base_addr + offset
+            num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
+            stack.append(Value(num, ValType.I64))
+        elif inst.opcode == Opcode.local_set:
+            idx = inst.operands[0]
+            locals[idx] = stack.pop()
+            if DEBUG:
+                print(f"  Set local: [{idx}] <- {locals[idx]}")
+        elif inst.opcode == Opcode.local_tee:
+            idx = inst.operands[0]
+            locals[idx] = stack[-1]
+            if DEBUG:
+                print(f"  tee locals[{idx}] = {stack[-1]}")
+        elif inst.opcode == Opcode.global_set:
+            idx = inst.operands[0]
+            globals[idx] = stack.pop()
+            if DEBUG:
+                print(f"  set globals[{idx}] <= {globals[idx]}")
+        elif inst.opcode == Opcode.i64_const:
+            c = inst.operands[0]
+            stack.append(Value(c, ValType.I64))
+        elif inst.opcode == Opcode.i32_add:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
+            stack.append(Value(i32_add(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_sub:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}")
+            stack.append(Value(i32_add(a.val, -b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_mul:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
+            stack.append(Value(i32_mul(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_div_u:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
+            stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_div_s:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
+            stack.append(Value(i32_div_s(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_and:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  and: {a.val} & {b.val} -> {a.val & b.val}")
+            stack.append(Value(a.val & b.val, ValType.I32))
+        elif inst.opcode == Opcode.i32_or:
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(Value(a.val | b.val, ValType.I32))
+        elif inst.opcode == Opcode.i32_xor:
+            b = stack.pop()
+            a = stack.pop()
+            if DEBUG:
+                print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
+            stack.append(Value(a.val ^ b.val, ValType.I32))
+        elif inst.opcode == Opcode.i32_shl:
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(Value(i32_shl(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_shr_u:
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(Value(i32_shr_u(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_shr_s:
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(Value(i32_shr_s(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i64_shr_u:
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(Value(i64_shr_u(a.val, b.val), ValType.I32))
+        elif inst.opcode == Opcode.i32_eq:
+            b = stack.pop()
+            a = stack.pop()
+            if a.val == b.val:
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_le_u:
+            b = i32_to_u32(stack.pop().val)
+            a = i32_to_u32(stack.pop().val)
+            if a <= b:
+                if DEBUG:
+                    print(f"  le_u {a} <= {b} => True")
+                stack.append(Value(1, ValType.I32))
+            else:
+                if DEBUG:
+                    print(f"  le_u {a} <= {b} => False")
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_lt_s:
+            b = i32_to_s32(stack.pop().val)
+            a = i32_to_s32(stack.pop().val)
+            if a < b:
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_eqz:
+            a = stack.pop()
+            if DEBUG:
+                print(f"  eqz? {a.val} -> {a.val == 0}")
+            if a.val == 0:
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i64_eqz:
+            a = stack.pop()
+            if DEBUG:
+                print(f"  eqz? {a.val} -> {a.val == 0}")
+            if a.val == 0:
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i64_ne:
+            b = stack.pop()
+            a = stack.pop()
+            if i64_to_u64(a.val) != i64_to_u64(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_ne:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_s32(a.val) != i32_to_s32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_lt_u:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_u32(a.val) < i32_to_u32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_gt_u:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_u32(a.val) > i32_to_u32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i64_gt_u:
+            b = stack.pop()
+            a = stack.pop()
+            if i64_to_u64(a.val) > i64_to_u64(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_ge_u:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_u32(a.val) >= i32_to_u32(b.val):
+                if DEBUG:
+                    print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
+                stack.append(Value(1, ValType.I32))
+            else:
+                if DEBUG:
+                    print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_ge_s:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_s32(a.val) >= i32_to_s32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_gt_s:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_s32(a.val) > i32_to_s32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_le_s:
+            b = stack.pop()
+            a = stack.pop()
+            if i32_to_s32(a.val) <= i32_to_s32(b.val):
+                stack.append(Value(1, ValType.I32))
+            else:
+                stack.append(Value(0, ValType.I32))
+        elif inst.opcode == Opcode.i32_wrap_i64:
+            a = stack.pop()
+            stack.append(Value(a.val & i32_mask, ValType.I32))
+        elif inst.opcode == Opcode.select:
+            c = stack.pop()
+            b = stack.pop()
+            a = stack.pop()
+            if c.val == 0:
+                if DEBUG:
+                    print(f"  select({a}, {b}, {c}) -> {b}")
+                stack.append(b)
+            else:
+                if DEBUG:
+                    print(f"  select({a}, {b}, {c}) -> {a}")
+                stack.append(a)
+        elif inst.opcode == Opcode.drop:
+            stack.pop()
+        elif inst.opcode == Opcode.memory_size:
+            stack.append(Value(len(mem) & i32_mask, ValType.I32))
+        elif inst.opcode == Opcode.br:
+            label = inst.operands[0].x
+            return Jump(label)
+        elif inst.opcode == Opcode.br_if:
+            x = stack.pop()
+            label = inst.operands[0].x
+            if x.val != 0:
+                return Jump(label)
+        elif inst.opcode == Opcode.br_table:
+            x = stack.pop()
+            labels = inst.operands[0]
+            default = inst.operands[1]
+            if DEBUG:
+                print(f"  br_table labels={labels} default={default} val={x.val}")
+            if 0 <= x.val < len(labels):
+                if DEBUG:
+                    print(f"  br_table taking label {labels[x.val]} -> {labels[x.val].x}")
+                return Jump(labels[x.val].x)
+            else:
+                if DEBUG:
+                    print(f"  br_table taking default")
+                return Jump(default.x)
+        elif inst.opcode == Opcode.if_:
+            then = inst.operands[0]
+            else_ = inst.operands[1]
+            if stack.pop().val:
+                if DEBUG:
+                    print("  if statement was true")
+                for inst2 in then:
+                    j = exec_instruction(
+                        inst2,
+                        locals,
+                        stack,
+                        globals,
+                        mem,
+                        functions,
+                        typ,
+                        codes,
+                        import_functions,
+                        function_names,
+                        element_section,
+                        call_stack,
+                    )
+                    if j is not None:
+                        if j.label == -1:
+                            return j
+                        elif j.label == 0:
+                            break
+                        else:
+                            return Jump(j.label - 1)
+            elif else_:
+                if DEBUG:
+                    print("  if statement was false and else was defined")
+                for inst2 in else_.instructions:
+                    j = exec_instruction(
+                        inst2,
+                        locals,
+                        stack,
+                        globals,
+                        mem,
+                        functions,
+                        typ,
+                        codes,
+                        import_functions,
+                        function_names,
+                        element_section,
+                        call_stack,
+                    )
+                    if j is not None:
+                        if j.label == -1:
+                            return j
+                        elif j.label == 0:
+                            break
+                        else:
+                            return Jump(j.label - 1)
+            else:
+                if DEBUG:
+                    print("  if statement was false (but no else)")
+        elif inst.opcode == Opcode.block:
+            block = inst.operands[0]
             for inst2 in block:
                 j = exec_instruction(
                     inst2,
@@ -857,156 +1740,131 @@ def exec_instruction_inner(
                     if j.label == -1:
                         return j
                     elif j.label == 0:
-                        break  # back to beginning of loop
+                        break
                     else:
                         return Jump(j.label - 1)
-            else:
-                break
-
-    elif inst.opcode == Opcode.call:
-        fidx = inst.operands[0]
-
-        f = functions[fidx.x]
-        if isinstance(f, ImportFunction):
-            raise ValueError("Not supported yet: calling function %d" % fidx.x)
-        else:
-            code2 = f.code
-            parameter_types = f.parameter_types
-            # type_idx = functions.funcs[fidx.x].x
-            # parameter_types = typ.function_types[type_idx].parameter_types
-
-            parameters = []
-            for i in range(len(parameter_types)):
-                parameters.append(stack.pop())
-            parameters.reverse()
-            if fidx.x < len(function_names) and function_names[fidx.x] != "?":
-                fname = function_names[fidx.x]
+        elif inst.opcode == Opcode.loop:
+            block = inst.operands[0]
+            while True:
                 if DEBUG:
-                    print(
-                        f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
+                    print("*** begin loop")
+                for inst2 in block:
+                    j = exec_instruction(
+                        inst2,
+                        locals,
+                        stack,
+                        globals,
+                        mem,
+                        functions,
+                        typ,
+                        codes,
+                        import_functions,
+                        function_names,
+                        element_section,
+                        call_stack,
                     )
+                    if j is not None:
+                        if j.label == -1:
+                            return j
+                        elif j.label == 0:
+                            break  # back to beginning of loop
+                        else:
+                            return Jump(j.label - 1)
+                else:
+                    break
+
+        elif inst.opcode == Opcode.call:
+            fidx = inst.operands[0]
+
+            f = functions[fidx.x]
+            if isinstance(f, ImportFunction):
+                raise ValueError("Not supported yet: calling function %d" % fidx.x)
             else:
-                fname = f"f_{fidx.x}"
-                if DEBUG:
-                    print(f"*** Call f_{fidx.x}({parameters})")
-            return exec_function(
-                code2,
-                parameters,
-                stack,
-                globals,
-                mem,
-                functions,
-                typ,
-                codes,
-                import_functions,
-                function_names,
-                element_section,
-                call_stack + [fname],
-            )
-    elif inst.opcode == Opcode.call_indirect:
-        # tidx = inst.operands[0].x
-        # t = typ.function_types[tidx]
-        table_idx = stack.pop().val
-        if DEBUG:
-            print(f"*** Call indirect table idx {table_idx}")
-        table = element_section.elemsec[0]
-        fidx = table.y[table_idx]
-        f = functions[fidx.x]
-        if isinstance(f, ImportFunction):
-            raise ValueError("Not supported yet: calling function %d" % fidx.x)
+                code2 = f.code
+                parameter_types = f.parameter_types
+                # type_idx = functions.funcs[fidx.x].x
+                # parameter_types = typ.function_types[type_idx].parameter_types
+
+                parameters = []
+                for i in range(len(parameter_types)):
+                    parameters.append(stack.pop())
+                parameters.reverse()
+                if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                    fname = function_names[fidx.x]
+                    if DEBUG:
+                        print(
+                            f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
+                        )
+                else:
+                    fname = f"f_{fidx.x}"
+                    if DEBUG:
+                        print(f"*** Call f_{fidx.x}({parameters})")
+                return exec_function(
+                    code2,
+                    parameters,
+                    stack,
+                    globals,
+                    mem,
+                    functions,
+                    typ,
+                    codes,
+                    import_functions,
+                    function_names,
+                    element_section,
+                    call_stack + [fname],
+                )
+        elif inst.opcode == Opcode.call_indirect:
+            # tidx = inst.operands[0].x
+            # t = typ.function_types[tidx]
+            table_idx = stack.pop().val
+            if DEBUG:
+                print(f"*** Call indirect table idx {table_idx}")
+            table = element_section.elemsec[0]
+            fidx = table.y[table_idx]
+            f = functions[fidx.x]
+            if isinstance(f, ImportFunction):
+                raise ValueError("Not supported yet: calling function %d" % fidx.x)
+            else:
+                if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                    fname = function_names[fidx.x]
+                    if DEBUG:
+                        print(f"*** Call({function_names[fidx.x]})")
+                else:
+                    fname = f"f_{fidx.x}"
+                    if DEBUG:
+                        print(f"*** Call(f_{fidx.x})")
+                code2 = f.code
+                parameter_types = f.parameter_types
+                # type_idx = functions.funcs[fidx.x].x
+                # parameter_types = typ.function_types[type_idx].parameter_types
+
+                parameters = []
+                for i in range(len(parameter_types)):
+                    parameters.append(stack.pop())
+                parameters.reverse()
+                return exec_function(
+                    code2,
+                    parameters,
+                    stack,
+                    globals,
+                    mem,
+                    functions,
+                    typ,
+                    codes,
+                    import_functions,
+                    function_names,
+                    element_section,
+                    call_stack + [fname],
+                )
+        elif inst.opcode == Opcode.return_:
+            return Jump(-1)
         else:
-            if fidx.x < len(function_names) and function_names[fidx.x] != "?":
-                fname = function_names[fidx.x]
-                if DEBUG:
-                    print(f"*** Call({function_names[fidx.x]})")
-            else:
-                fname = f"f_{fidx.x}"
-                if DEBUG:
-                    print(f"*** Call(f_{fidx.x})")
-            code2 = f.code
-            parameter_types = f.parameter_types
-            # type_idx = functions.funcs[fidx.x].x
-            # parameter_types = typ.function_types[type_idx].parameter_types
+            if DEBUG:
+                print(f"Locals: {locals}")
+                print(f"Stack: {stack}")
+                print(f"Current instruction: {inst}")
+            raise (ValueError(f"Unknown instruction: {inst}"))
 
-            parameters = []
-            for i in range(len(parameter_types)):
-                parameters.append(stack.pop())
-            parameters.reverse()
-            return exec_function(
-                code2,
-                parameters,
-                stack,
-                globals,
-                mem,
-                functions,
-                typ,
-                codes,
-                import_functions,
-                function_names,
-                element_section,
-                call_stack + [fname],
-            )
-    elif inst.opcode == Opcode.return_:
-        return Jump(-1)
-    else:
-        if DEBUG:
-            print(f"Locals: {locals}")
-            print(f"Stack: {stack}")
-            print(f"Current instruction: {inst}")
-        raise (ValueError(f"Unknown instruction: {inst}"))
-
-
-def exec_function(
-    code: Func,
-    parameters: list[Value],
-    stack: list[Value],
-    globals: list[Value],
-    mem: list[int],
-    functions: list[ImportFunction | WasmFunction],
-    typ: TypeSection,
-    codes: CodeSection,
-    import_functions: list[ImportFunction],
-    function_names: list[str],
-    element_section: ElementSection,
-    call_stack: list[str],
-) -> Optional[Jump]:
-    locals = []
-    for i in range(len(parameters)):
-        locals.append(parameters[i])
-    for local_type in code.t:
-        for i in range(local_type.n):
-            locals.append(Value(default_values[local_type.t], local_type.t))
-    instructions = code.e.instructions
-    pc = 0
-    while pc < len(instructions):
-        j = exec_instruction(
-            instructions[pc],
-            locals,
-            stack,
-            globals,
-            mem,
-            functions,
-            typ,
-            codes,
-            import_functions,
-            function_names,
-            element_section,
-            call_stack,
-        )
-        if j is not None:
-            if j.label == -1:
-                if DEBUG:
-                    print("Return")
-                break
-            return j
-        pc += 1
-    if len(stack) == 0:
-        last = "?"
-    else:
-        last = stack[-1]
-    fname = call_stack[-1] if call_stack else ""
-    if DEBUG:
-        print(f"*** ({fname}) Return: {last}")
 
 
 def read_module(f: bytes) -> Module:
@@ -1226,221 +2084,6 @@ def read_locals(raw: BinaryIO) -> Locals:
     n = read_u32(raw)
     t = read_valtype(raw)
     return Locals(n, t)
-
-
-class Opcode(IntEnum):
-    unreachable = 0x00
-    nop = 0x01
-    block = 0x02
-    loop = 0x03
-    if_ = 0x04
-    else_ = 0x05
-    end = 0x0B
-    br = 0x0C
-    br_if = 0x0D
-    br_table = 0x0E
-    return_ = 0x0F
-    call = 0x10
-    call_indirect = 0x11
-    ref_null = 0xD0
-    ref_is_null = 0xD1
-    ref_func = 0xD2
-    drop = 0x1A
-    select = 0x1B
-    select_vec = 0x1C
-    local_get = 0x20
-    local_set = 0x21
-    local_tee = 0x22
-    global_get = 0x23
-    global_set = 0x24
-    table_get = 0x25
-    table_set = 0x26
-    i32_load = 0x28
-    i64_load = 0x29
-    f32_load = 0x2A
-    f64_load = 0x2B
-    i32_load8_s = 0x2C
-    i32_load8_u = 0x2D
-    i32_load16_s = 0x2E
-    i32_load16_u = 0x2F
-    i64_load8_s = 0x30
-    i64_load8_u = 0x31
-    i64_load16_s = 0x32
-    i64_load16_u = 0x33
-    i64_load32_s = 0x34
-    i64_load32_u = 0x35
-    i32_store = 0x36
-    i64_store = 0x37
-    f32_store = 0x38
-    f64_store = 0x39
-    i32_store8 = 0x3A
-    i32_store16 = 0x3B
-    i64_store8 = 0x3C
-    i64_store16 = 0x3D
-    i64_store32 = 0x3E
-    memory_size = 0x3F
-    memory_grow = 0x40
-    i32_const = 0x41
-    i64_const = 0x42
-    f32_const = 0x43
-    f64_const = 0x44
-
-    i32_eqz = 0x45
-    i32_eq = 0x46
-    i32_ne = 0x47
-    i32_lt_s = 0x48
-    i32_lt_u = 0x49
-    i32_gt_s = 0x4A
-    i32_gt_u = 0x4B
-    i32_le_s = 0x4C
-    i32_le_u = 0x4D
-    i32_ge_s = 0x4E
-    i32_ge_u = 0x4F
-    i64_eqz = 0x50
-    i64_eq = 0x51
-    i64_ne = 0x52
-    i64_lt_s = 0x53
-    i64_lt_u = 0x54
-    i64_gt_s = 0x55
-    i64_gt_u = 0x56
-    i64_le_s = 0x57
-    i64_le_u = 0x58
-    i64_ge_s = 0x59
-    i64_ge_u = 0x5A
-    f32_eq = 0x5B
-    f32_ne = 0x5C
-    f32_lt = 0x5D
-    f32_gt = 0x5E
-    f32_le = 0x5F
-    f32_ge = 0x60
-    f64_eq = 0x61
-    f64_ne = 0x62
-    f64_lt = 0x63
-    f64_gt = 0x64
-    f64_le = 0x65
-    f64_ge = 0x66
-    i32_clz = 0x67
-    i32_ctz = 0x68
-    i32_popcnt = 0x69
-    i32_add = 0x6A
-    i32_sub = 0x6B
-    i32_mul = 0x6C
-    i32_div_s = 0x6D
-    i32_div_u = 0x6E
-    i32_rem_s = 0x6F
-    i32_rem_u = 0x70
-    i32_and = 0x71
-    i32_or = 0x72
-    i32_xor = 0x73
-    i32_shl = 0x74
-    i32_shr_s = 0x75
-    i32_shr_u = 0x76
-    i32_rotl = 0x77
-    i32_rotr = 0x78
-    i64_clz = 0x79
-    i64_ctz = 0x7A
-    i64_popcnt = 0x7B
-    i64_add = 0x7C
-    i64_sub = 0x7D
-    i64_mul = 0x7E
-    i64_div_s = 0x7F
-    i64_div_u = 0x80
-    i64_rem_s = 0x81
-    i64_rem_u = 0x82
-    i64_and = 0x83
-    i64_or = 0x84
-    i64_xor = 0x85
-    i64_shl = 0x86
-    i64_shr_s = 0x87
-    i64_shr_u = 0x88
-    i64_rotl = 0x89
-    i64_rotr = 0x8A
-    f32_abs = 0x8B
-    f32_neg = 0x8C
-    f32_ceil = 0x8D
-    f32_floor = 0x8E
-    f32_trunc = 0x8F
-    f32_nearest = 0x90
-    f32_sqrt = 0x91
-    f32_add = 0x92
-    f32_sub = 0x93
-    f32_mul = 0x94
-    f32_div = 0x95
-    f32_min = 0x96
-    f32_max = 0x97
-    f32_copysign = 0x98
-    f64_abs = 0x99
-    f64_neg = 0x9A
-    f64_ceil = 0x9B
-    f64_floor = 0x9C
-    f64_trunc = 0x9D
-    f64_nearest = 0x9E
-    f64_sqrt = 0x9F
-    f64_add = 0xA0
-    f64_sub = 0xA1
-    f64_mul = 0xA2
-    f64_div = 0xA3
-    f64_min = 0xA4
-    f64_max = 0xA5
-    f64_copysign = 0xA6
-    i32_wrap_i64 = 0xA7
-    i32_trunc_f32_s = 0xA8
-    i32_trunc_f32_u = 0xA9
-    i32_trunc_f64_s = 0xAA
-    i32_trunc_f64_u = 0xAB
-    i64_extend_i32_s = 0xAC
-    i64_extend_i32_u = 0xAD
-    i64_trunc_f32_s = 0xAE
-    i64_trunc_f32_u = 0xAF
-    i64_trunc_f64_s = 0xB0
-    i64_trunc_f64_u = 0xB1
-    f32_convert_i32_s = 0xB2
-    f32_convert_i32_u = 0xB3
-    f32_convert_i64_s = 0xB4
-    f32_convert_i64_u = 0xB5
-    f32_demote_f64 = 0xB6
-    f64_convert_i32_s = 0xB7
-    f64_convert_i32_u = 0xB8
-    f64_convert_i64_s = 0xB9
-    f64_convert_i64_u = 0xBA
-    f64_promote_f32 = 0xBB
-    i32_reinterpret_f32 = 0xBC
-    i64_reinterpret_f64 = 0xBD
-    f32_reinterpret_i32 = 0xBE
-    f64_reinterpret_i64 = 0xBF
-    i32_extend8_s = 0xC0
-    i32_extend16_s = 0xC1
-    i64_extend8_s = 0xC2
-    i64_extend16_s = 0xC3
-    i64_extend32_s = 0xC4
-
-    ext_fc = 0xFC
-    ext_fd = 0xFD
-
-
-class FCSubOp(IntEnum):
-    i32_trunc_sat_f32_s = 0
-    i32_trunc_sat_f32_u = 1
-    i32_trunc_sat_f64_s = 2
-    i32_trunc_sat_f64_u = 3
-    i64_trunc_sat_f32_s = 4
-    i64_trunc_sat_f32_u = 5
-    i64_trunc_sat_f64_s = 6
-    i64_trunc_sat_f64_u = 7
-    memory_init = 8
-    data_drop = 9
-    memory_copy = 10
-    memory_fill = 11
-    table_init = 12
-    elem_drop = 13
-    table_copy = 14
-    table_grow = 15
-    table_size = 16
-    table_fill = 17
-
-
-class FDSubOp(IntEnum):
-    pass
 
 
 Op = namedtuple("Op", ["opcode", "subop", "operands"])
