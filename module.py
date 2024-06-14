@@ -472,7 +472,7 @@ def init_module(mod: Module):
     stack = []
 
     wasm = WASM(stack, globals, mem, function_list, typ, code, import_functions, function_names, element_section)
-    wasm.run_function(start.start.x)
+    wasm.run_function(start.start.x, parameters)
 
     #run(CodeLocation(start.start.x, 0))
 
@@ -680,6 +680,16 @@ def mem_write(mem: list[int], addr: int, data: bytes):
 
 Return = "return"
 
+class ReturnClass:
+    def __init__(self):
+        pass
+Return = ReturnClass()
+
+class Call:
+    def __init__(self, f_idx: int, parameters: list[Value]):
+        self.f_idx = f_idx
+        self.parameters = parameters
+
 class WASM:
     def __init__(self,
             stack: list[Value|Label],
@@ -705,9 +715,9 @@ class WASM:
         self.pc = None
         self.pc_stack = []
 
-    # @property
-    # def stack(self):
-    #     return self.stack
+    @property
+    def locals(self):
+        return self.locals_stack[-1]
 
     def run_function(self, x: int, parameters: Optional[list[Value]]=None):
         self.pc = CodeLocation(x, 0)
@@ -730,7 +740,26 @@ class WASM:
         while True:
             j = self.exec_instruction()
             if j is not None:
-                if j == Return:
+                if isinstance(j, Call):
+                    fidx = j.f_idx
+                    if fidx < len(self.function_names) and self.function_names[fidx] != "?":
+                        fname = self.function_names[fidx]
+                    else:
+                        fname = f"f_{fidx.x}"
+                    code = self.functions[fidx].code
+                    locals = []
+                    for i in range(len(j.parameters)):
+                        locals.append(j.parameters[i])
+                    for local_type in code.t:
+                        for i in range(local_type.n):
+                            locals.append(Value(default_values[local_type.t], local_type.t))
+                    self.locals_stack.append(locals)
+                    self.call_stack.append(fname)
+                    self.pc_stack.append(self.pc)
+                    self.pc = CodeLocation(fidx, 0)
+                    continue
+
+                if j is Return:
                     if not self.pc_stack:
                         return
                     self.call_stack.pop()
@@ -784,371 +813,414 @@ class WASM:
         self.stack.append(Value(c, ValType.I32))
 
     def exec_unreachable(self):
-        pass
-    def exec_nop(self):
-        pass
+        raise ValueError('unreachable')
     def exec_block(self):
-        pass
+        raise ValueError('block')
     def exec_loop(self):
-        pass
+        raise ValueError('loop')
     def exec_if_(self):
-        pass
+        raise ValueError('if_')
     def exec_br(self):
-        pass
+        raise ValueError('br')
     def exec_br_if(self):
-        pass
+        raise ValueError('br_if')
     def exec_br_table(self):
-        pass
+        raise ValueError('br_table')
     def exec_return_(self):
-        pass
+        raise ValueError('return_')
     def exec_call(self):
-        pass
+        fidx = self.inst.operands[0]
+
+        f = self.functions[fidx.x]
+        if isinstance(f, ImportFunction):
+            raise ValueError("Not supported yet: calling function %d" % fidx.x)
+        else:
+            code2 = f.code
+            parameter_types = f.parameter_types
+            # type_idx = functions.funcs[fidx.x].x
+            # parameter_types = typ.function_types[type_idx].parameter_types
+
+            parameters = []
+            for i in range(len(parameter_types)):
+                parameters.append(self.stack.pop())
+            parameters.reverse()
+            if fidx.x < len(self.function_names) and self.function_names[fidx.x] != "?":
+                if DEBUG:
+                    print(
+                        f"*** Call {self.function_names[fidx.x]}({parameters}) (function {fidx.x})"
+                    )
+            else:
+                if DEBUG:
+                    print(f"*** Call f_{fidx.x}({parameters})")
+            return Call(fidx.x, parameters)
+            # return exec_function(
+            #     code2,
+            #     parameters,
+            #     stack,
+            #     globals,
+            #     mem,
+            #     functions,
+            #     typ,
+            #     codes,
+            #     import_functions,
+            #     function_names,
+            #     element_section,
+            #     call_stack + [fname],
+            # )
     def exec_call_indirect(self):
-        pass
+        raise ValueError('call_indirect')
     def exec_ref_null(self):
-        pass
+        raise ValueError('ref_null')
     def exec_ref_is_null(self):
-        pass
+        raise ValueError('ref_is_null')
     def exec_ref_func(self):
-        pass
+        raise ValueError('ref_func')
     def exec_drop(self):
-        pass
+        raise ValueError('drop')
     def exec_select(self):
-        pass
+        raise ValueError('select')
     def exec_select_vec(self):
-        pass
+        raise ValueError('select_vec')
     def exec_local_get(self):
-        pass
+        if DEBUG:
+            print(f"Local get {self.inst.operands[0]} -> {self.locals[self.inst.operands[0]]}")
+        self.stack.append(self.locals[self.inst.operands[0]])
     def exec_local_set(self):
-        pass
+        idx = self.inst.operands[0]
+        self.locals[idx] = self.stack.pop()
+        if DEBUG:
+            print(f"  Set local: [{idx}] <- {self.locals[idx]}")
     def exec_local_tee(self):
-        pass
-    def exec_global_get(self):
-        pass
+        raise ValueError('local_tee')
     def exec_global_set(self):
-        pass
+        idx = self.inst.operands[0]
+        self.globals[idx] = self.stack.pop()
+        if DEBUG:
+            print(f"  set globals[{idx}] <= {self.globals[idx]}")
     def exec_table_get(self):
-        pass
+        raise ValueError('table_get')
     def exec_table_set(self):
-        pass
+        raise ValueError('table_set')
     def exec_i32_load(self):
-        pass
+        raise ValueError('i32_load')
     def exec_i64_load(self):
-        pass
+        raise ValueError('i64_load')
     def exec_f32_load(self):
-        pass
+        raise ValueError('f32_load')
     def exec_f64_load(self):
-        pass
+        raise ValueError('f64_load')
     def exec_i32_load8_s(self):
-        pass
+        raise ValueError('i32_load8_s')
     def exec_i32_load8_u(self):
-        pass
+        raise ValueError('i32_load8_u')
     def exec_i32_load16_s(self):
-        pass
+        raise ValueError('i32_load16_s')
     def exec_i32_load16_u(self):
-        pass
+        raise ValueError('i32_load16_u')
     def exec_i64_load8_s(self):
-        pass
+        raise ValueError('i64_load8_s')
     def exec_i64_load8_u(self):
-        pass
+        raise ValueError('i64_load8_u')
     def exec_i64_load16_s(self):
-        pass
+        raise ValueError('i64_load16_s')
     def exec_i64_load16_u(self):
-        pass
+        raise ValueError('i64_load16_u')
     def exec_i64_load32_s(self):
-        pass
+        raise ValueError('i64_load32_s')
     def exec_i64_load32_u(self):
-        pass
+        raise ValueError('i64_load32_u')
     def exec_i32_store(self):
-        pass
+        raise ValueError('i32_store')
     def exec_i64_store(self):
-        pass
+        raise ValueError('i64_store')
     def exec_f32_store(self):
-        pass
+        raise ValueError('f32_store')
     def exec_f64_store(self):
-        pass
+        raise ValueError('f64_store')
     def exec_i32_store8(self):
-        pass
+        raise ValueError('i32_store8')
     def exec_i32_store16(self):
-        pass
+        raise ValueError('i32_store16')
     def exec_i64_store8(self):
-        pass
+        raise ValueError('i64_store8')
     def exec_i64_store16(self):
-        pass
+        raise ValueError('i64_store16')
     def exec_i64_store32(self):
-        pass
+        raise ValueError('i64_store32')
     def exec_memory_size(self):
-        pass
+        raise ValueError('memory_size')
     def exec_memory_grow(self):
-        pass
-    def exec_i32_const(self):
-        pass
+        raise ValueError('memory_grow')
     def exec_i64_const(self):
-        pass
+        raise ValueError('i64_const')
     def exec_f32_const(self):
-        pass
+        raise ValueError('f32_const')
     def exec_f64_const(self):
-        pass
+        raise ValueError('f64_const')
     def exec_i32_eqz(self):
-        pass
+        raise ValueError('i32_eqz')
     def exec_i32_eq(self):
-        pass
+        raise ValueError('i32_eq')
     def exec_i32_ne(self):
-        pass
+        raise ValueError('i32_ne')
     def exec_i32_lt_s(self):
-        pass
+        raise ValueError('i32_lt_s')
     def exec_i32_lt_u(self):
-        pass
+        raise ValueError('i32_lt_u')
     def exec_i32_gt_s(self):
-        pass
+        raise ValueError('i32_gt_s')
     def exec_i32_gt_u(self):
-        pass
+        raise ValueError('i32_gt_u')
     def exec_i32_le_s(self):
-        pass
+        raise ValueError('i32_le_s')
     def exec_i32_le_u(self):
-        pass
+        raise ValueError('i32_le_u')
     def exec_i32_ge_s(self):
-        pass
+        raise ValueError('i32_ge_s')
     def exec_i32_ge_u(self):
-        pass
+        raise ValueError('i32_ge_u')
     def exec_i64_eqz(self):
-        pass
+        raise ValueError('i64_eqz')
     def exec_i64_eq(self):
-        pass
+        raise ValueError('i64_eq')
     def exec_i64_ne(self):
-        pass
+        raise ValueError('i64_ne')
     def exec_i64_lt_s(self):
-        pass
+        raise ValueError('i64_lt_s')
     def exec_i64_lt_u(self):
-        pass
+        raise ValueError('i64_lt_u')
     def exec_i64_gt_s(self):
-        pass
+        raise ValueError('i64_gt_s')
     def exec_i64_gt_u(self):
-        pass
+        raise ValueError('i64_gt_u')
     def exec_i64_le_s(self):
-        pass
+        raise ValueError('i64_le_s')
     def exec_i64_le_u(self):
-        pass
+        raise ValueError('i64_le_u')
     def exec_i64_ge_s(self):
-        pass
+        raise ValueError('i64_ge_s')
     def exec_i64_ge_u(self):
-        pass
+        raise ValueError('i64_ge_u')
     def exec_f32_eq(self):
-        pass
+        raise ValueError('f32_eq')
     def exec_f32_ne(self):
-        pass
+        raise ValueError('f32_ne')
     def exec_f32_lt(self):
-        pass
+        raise ValueError('f32_lt')
     def exec_f32_gt(self):
-        pass
+        raise ValueError('f32_gt')
     def exec_f32_le(self):
-        pass
+        raise ValueError('f32_le')
     def exec_f32_ge(self):
-        pass
+        raise ValueError('f32_ge')
     def exec_f64_eq(self):
-        pass
+        raise ValueError('f64_eq')
     def exec_f64_ne(self):
-        pass
+        raise ValueError('f64_ne')
     def exec_f64_lt(self):
-        pass
+        raise ValueError('f64_lt')
     def exec_f64_gt(self):
-        pass
+        raise ValueError('f64_gt')
     def exec_f64_le(self):
-        pass
+        raise ValueError('f64_le')
     def exec_f64_ge(self):
-        pass
+        raise ValueError('f64_ge')
     def exec_i32_clz(self):
-        pass
+        raise ValueError('i32_clz')
     def exec_i32_ctz(self):
-        pass
+        raise ValueError('i32_ctz')
     def exec_i32_popcnt(self):
-        pass
+        raise ValueError('i32_popcnt')
     def exec_i32_add(self):
-        pass
+        b = self.stack.pop()
+        a = self.stack.pop()
+        if DEBUG:
+            print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
+        self.stack.append(Value(i32_add(a.val, b.val), ValType.I32))
     def exec_i32_sub(self):
-        pass
+        raise ValueError('i32_sub')
     def exec_i32_mul(self):
-        pass
+        raise ValueError('i32_mul')
     def exec_i32_div_s(self):
-        pass
+        raise ValueError('i32_div_s')
     def exec_i32_div_u(self):
-        pass
+        raise ValueError('i32_div_u')
     def exec_i32_rem_s(self):
-        pass
+        raise ValueError('i32_rem_s')
     def exec_i32_rem_u(self):
-        pass
+        raise ValueError('i32_rem_u')
     def exec_i32_and(self):
-        pass
+        raise ValueError('i32_and')
     def exec_i32_or(self):
-        pass
+        raise ValueError('i32_or')
     def exec_i32_xor(self):
-        pass
+        raise ValueError('i32_xor')
     def exec_i32_shl(self):
-        pass
+        raise ValueError('i32_shl')
     def exec_i32_shr_s(self):
-        pass
+        raise ValueError('i32_shr_s')
     def exec_i32_shr_u(self):
-        pass
+        raise ValueError('i32_shr_u')
     def exec_i32_rotl(self):
-        pass
+        raise ValueError('i32_rotl')
     def exec_i32_rotr(self):
-        pass
+        raise ValueError('i32_rotr')
     def exec_i64_clz(self):
-        pass
+        raise ValueError('i64_clz')
     def exec_i64_ctz(self):
-        pass
+        raise ValueError('i64_ctz')
     def exec_i64_popcnt(self):
-        pass
+        raise ValueError('i64_popcnt')
     def exec_i64_add(self):
-        pass
+        raise ValueError('i64_add')
     def exec_i64_sub(self):
-        pass
+        raise ValueError('i64_sub')
     def exec_i64_mul(self):
-        pass
+        raise ValueError('i64_mul')
     def exec_i64_div_s(self):
-        pass
+        raise ValueError('i64_div_s')
     def exec_i64_div_u(self):
-        pass
+        raise ValueError('i64_div_u')
     def exec_i64_rem_s(self):
-        pass
+        raise ValueError('i64_rem_s')
     def exec_i64_rem_u(self):
-        pass
+        raise ValueError('i64_rem_u')
     def exec_i64_and(self):
-        pass
+        raise ValueError('i64_and')
     def exec_i64_or(self):
-        pass
+        raise ValueError('i64_or')
     def exec_i64_xor(self):
-        pass
+        raise ValueError('i64_xor')
     def exec_i64_shl(self):
-        pass
+        raise ValueError('i64_shl')
     def exec_i64_shr_s(self):
-        pass
+        raise ValueError('i64_shr_s')
     def exec_i64_shr_u(self):
-        pass
+        raise ValueError('i64_shr_u')
     def exec_i64_rotl(self):
-        pass
+        raise ValueError('i64_rotl')
     def exec_i64_rotr(self):
-        pass
+        raise ValueError('i64_rotr')
     def exec_f32_abs(self):
-        pass
+        raise ValueError('f32_abs')
     def exec_f32_neg(self):
-        pass
+        raise ValueError('f32_neg')
     def exec_f32_ceil(self):
-        pass
+        raise ValueError('f32_ceil')
     def exec_f32_floor(self):
-        pass
+        raise ValueError('f32_floor')
     def exec_f32_trunc(self):
-        pass
+        raise ValueError('f32_trunc')
     def exec_f32_nearest(self):
-        pass
+        raise ValueError('f32_nearest')
     def exec_f32_sqrt(self):
-        pass
+        raise ValueError('f32_sqrt')
     def exec_f32_add(self):
-        pass
+        raise ValueError('f32_add')
     def exec_f32_sub(self):
-        pass
+        raise ValueError('f32_sub')
     def exec_f32_mul(self):
-        pass
+        raise ValueError('f32_mul')
     def exec_f32_div(self):
-        pass
+        raise ValueError('f32_div')
     def exec_f32_min(self):
-        pass
+        raise ValueError('f32_min')
     def exec_f32_max(self):
-        pass
+        raise ValueError('f32_max')
     def exec_f32_copysign(self):
-        pass
+        raise ValueError('f32_copysign')
     def exec_f64_abs(self):
-        pass
+        raise ValueError('f64_abs')
     def exec_f64_neg(self):
-        pass
+        raise ValueError('f64_neg')
     def exec_f64_ceil(self):
-        pass
+        raise ValueError('f64_ceil')
     def exec_f64_floor(self):
-        pass
+        raise ValueError('f64_floor')
     def exec_f64_trunc(self):
-        pass
+        raise ValueError('f64_trunc')
     def exec_f64_nearest(self):
-        pass
+        raise ValueError('f64_nearest')
     def exec_f64_sqrt(self):
-        pass
+        raise ValueError('f64_sqrt')
     def exec_f64_add(self):
-        pass
+        raise ValueError('f64_add')
     def exec_f64_sub(self):
-        pass
+        raise ValueError('f64_sub')
     def exec_f64_mul(self):
-        pass
+        raise ValueError('f64_mul')
     def exec_f64_div(self):
-        pass
+        raise ValueError('f64_div')
     def exec_f64_min(self):
-        pass
+        raise ValueError('f64_min')
     def exec_f64_max(self):
-        pass
+        raise ValueError('f64_max')
     def exec_f64_copysign(self):
-        pass
+        raise ValueError('f64_copysign')
     def exec_i32_wrap_i64(self):
-        pass
+        raise ValueError('i32_wrap_i64')
     def exec_i32_trunc_f32_s(self):
-        pass
+        raise ValueError('i32_trunc_f32_s')
     def exec_i32_trunc_f32_u(self):
-        pass
+        raise ValueError('i32_trunc_f32_u')
     def exec_i32_trunc_f64_s(self):
-        pass
+        raise ValueError('i32_trunc_f64_s')
     def exec_i32_trunc_f64_u(self):
-        pass
+        raise ValueError('i32_trunc_f64_u')
     def exec_i64_extend_i32_s(self):
-        pass
+        raise ValueError('i64_extend_i32_s')
     def exec_i64_extend_i32_u(self):
-        pass
+        raise ValueError('i64_extend_i32_u')
     def exec_i64_trunc_f32_s(self):
-        pass
+        raise ValueError('i64_trunc_f32_s')
     def exec_i64_trunc_f32_u(self):
-        pass
+        raise ValueError('i64_trunc_f32_u')
     def exec_i64_trunc_f64_s(self):
-        pass
+        raise ValueError('i64_trunc_f64_s')
     def exec_i64_trunc_f64_u(self):
-        pass
+        raise ValueError('i64_trunc_f64_u')
     def exec_f32_convert_i32_s(self):
-        pass
+        raise ValueError('f32_convert_i32_s')
     def exec_f32_convert_i32_u(self):
-        pass
+        raise ValueError('f32_convert_i32_u')
     def exec_f32_convert_i64_s(self):
-        pass
+        raise ValueError('f32_convert_i64_s')
     def exec_f32_convert_i64_u(self):
-        pass
+        raise ValueError('f32_convert_i64_u')
     def exec_f32_demote_f64(self):
-        pass
+        raise ValueError('f32_demote_f64')
     def exec_f64_convert_i32_s(self):
-        pass
+        raise ValueError('f64_convert_i32_s')
     def exec_f64_convert_i32_u(self):
-        pass
+        raise ValueError('f64_convert_i32_u')
     def exec_f64_convert_i64_s(self):
-        pass
+        raise ValueError('f64_convert_i64_s')
     def exec_f64_convert_i64_u(self):
-        pass
+        raise ValueError('f64_convert_i64_u')
     def exec_f64_promote_f32(self):
-        pass
+        raise ValueError('f64_promote_f32')
     def exec_i32_reinterpret_f32(self):
-        pass
+        raise ValueError('i32_reinterpret_f32')
     def exec_i64_reinterpret_f64(self):
-        pass
+        raise ValueError('i64_reinterpret_f64')
     def exec_f32_reinterpret_i32(self):
-        pass
+        raise ValueError('f32_reinterpret_i32')
     def exec_f64_reinterpret_i64(self):
-        pass
+        raise ValueError('f64_reinterpret_i64')
     def exec_i32_extend8_s(self):
-        pass
+        raise ValueError('i32_extend8_s')
     def exec_i32_extend16_s(self):
-        pass
+        raise ValueError('i32_extend16_s')
     def exec_i64_extend8_s(self):
-        pass
+        raise ValueError('i64_extend8_s')
     def exec_i64_extend16_s(self):
-        pass
+        raise ValueError('i64_extend16_s')
     def exec_i64_extend32_s(self):
-        pass
+        raise ValueError('i64_extend32_s')
     def exec_ext_fc(self):
-        pass
+        raise ValueError('ext_fc')
     def exec_ext_fd(self):
-        pass
+        raise ValueError('ext_fd')
 
     opcode_table = {
         Opcode.else_: exec_nop,
@@ -1339,8 +1411,6 @@ class WASM:
         Opcode.i64_extend32_s: exec_i64_extend32_s,
         Opcode.ext_fc: exec_ext_fc,
         Opcode.ext_fd: exec_ext_fd,
-
-
     }
 
     def exec_instruction_inner(self,
@@ -1361,10 +1431,6 @@ class WASM:
 
         if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
             pass
-        elif inst.opcode == Opcode.local_get:
-            if DEBUG:
-                print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
-            self.stack.append(locals[inst.operands[0]])
         elif inst.opcode == Opcode.i32_load:
             offset = inst.operands[1]
             base_addr = stack.pop().val & i32_mask
@@ -1434,30 +1500,14 @@ class WASM:
             addr = base_addr + offset
             num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
             stack.append(Value(num, ValType.I64))
-        elif inst.opcode == Opcode.local_set:
-            idx = inst.operands[0]
-            locals[idx] = stack.pop()
-            if DEBUG:
-                print(f"  Set local: [{idx}] <- {locals[idx]}")
         elif inst.opcode == Opcode.local_tee:
             idx = inst.operands[0]
             locals[idx] = stack[-1]
             if DEBUG:
                 print(f"  tee locals[{idx}] = {stack[-1]}")
-        elif inst.opcode == Opcode.global_set:
-            idx = inst.operands[0]
-            globals[idx] = stack.pop()
-            if DEBUG:
-                print(f"  set globals[{idx}] <= {globals[idx]}")
         elif inst.opcode == Opcode.i64_const:
             c = inst.operands[0]
             stack.append(Value(c, ValType.I64))
-        elif inst.opcode == Opcode.i32_add:
-            b = stack.pop()
-            a = stack.pop()
-            if DEBUG:
-                print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
-            stack.append(Value(i32_add(a.val, b.val), ValType.I32))
         elif inst.opcode == Opcode.i32_sub:
             b = stack.pop()
             a = stack.pop()
@@ -1773,46 +1823,6 @@ class WASM:
                 else:
                     break
 
-        elif inst.opcode == Opcode.call:
-            fidx = inst.operands[0]
-
-            f = functions[fidx.x]
-            if isinstance(f, ImportFunction):
-                raise ValueError("Not supported yet: calling function %d" % fidx.x)
-            else:
-                code2 = f.code
-                parameter_types = f.parameter_types
-                # type_idx = functions.funcs[fidx.x].x
-                # parameter_types = typ.function_types[type_idx].parameter_types
-
-                parameters = []
-                for i in range(len(parameter_types)):
-                    parameters.append(stack.pop())
-                parameters.reverse()
-                if fidx.x < len(function_names) and function_names[fidx.x] != "?":
-                    fname = function_names[fidx.x]
-                    if DEBUG:
-                        print(
-                            f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
-                        )
-                else:
-                    fname = f"f_{fidx.x}"
-                    if DEBUG:
-                        print(f"*** Call f_{fidx.x}({parameters})")
-                return exec_function(
-                    code2,
-                    parameters,
-                    stack,
-                    globals,
-                    mem,
-                    functions,
-                    typ,
-                    codes,
-                    import_functions,
-                    function_names,
-                    element_section,
-                    call_stack + [fname],
-                )
         elif inst.opcode == Opcode.call_indirect:
             # tidx = inst.operands[0].x
             # t = typ.function_types[tidx]
