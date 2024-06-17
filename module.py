@@ -6,11 +6,19 @@ import sys
 import struct
 import io
 import time
+import pdb
 
 import argparse
 
 global DEBUG
+global block_counter
+block_counter = 0
 DEBUG = False
+
+
+def debug(x: str, tab: int = 0):
+    print("    " * tab + x)
+
 
 # necessary for large function parsing
 sys.setrecursionlimit(100000)
@@ -67,11 +75,14 @@ ELEMENT_SECTION_ID = 9
 CODE_SECTION_ID = 10
 DATA_SECTION_ID = 11
 
-Label = namedtuple('Label', ('valtype', 'name'))
+Label = namedtuple("Label", ("valtype", "name"))
+
+
 def new_label(bt, name):
     if bt == 0x40:
         return Label(None, name)
     return Label(ValType(bt), name)
+
 
 class ValType(IntEnum):
     I32 = 0x7F
@@ -114,8 +125,7 @@ class WasmFunction:
 
 
 def init_module(mod: Module):
-    if DEBUG:
-        print("Initializing module")
+    debug("Initializing module")
     start: StartSection = None
     functions: FunctionSection = None
     code: CodeSection = None
@@ -164,14 +174,12 @@ def init_module(mod: Module):
             if isinstance(imp.d, TypeIdx):
                 # TODO: patch in functions from this file into here
                 function_list.append(ImportFunction(imp.mod, imp.nm, imp.d.x))
-                if DEBUG:
-                    print(f"import function {imp.mod}.{imp.nm}")
+                debug(f"import function {imp.mod}.{imp.nm}")
                 function_names.append(f"{imp.mod}.{imp.nm}")
             elif isinstance(imp.d, GlobalType):
                 # TODO: patch in globals from here
                 val = imports.get(imp.nm, 0)
-                if DEBUG:
-                    print(f"globals[{len(globals)}] = import {imp.nm} = {val}")
+                debug(f"globals[{len(globals)}] = import {imp.nm} = {val}")
                 globals.append(Value(val, imp.d.t))
             elif isinstance(imp.d, MemType):
                 if len(mem) < imp.d.lim.n:
@@ -194,8 +202,7 @@ def init_module(mod: Module):
             Opcode.f64_const,
         )
         arg = op.operands[0]
-        if DEBUG:
-            print(f"globals[{len(globals)}] = {arg}")
+        debug(f"globals[{len(globals)}] = {arg}")
         if op.opcode == Opcode.i32_const:
             globals.append(Value(arg, ValType.I32))
         elif op.opcode == Opcode.i64_const:
@@ -214,16 +221,14 @@ def init_module(mod: Module):
         assert expr.instructions[0].opcode == Opcode.global_get
         assert expr.instructions[1].opcode == Opcode.end
         idx = globals[expr.instructions[0].operands[0]].val
-        if DEBUG:
-            print(f"Initializing data memidx={memidx}, offset={idx}")
+        debug(f"Initializing data memidx={memidx}, offset={idx}")
         if len(mem) < idx + len(b):
             needed = idx + len(b) - len(mem)
             mem.extend([0] * needed)
         for i in range(idx, idx + len(b)):
             mem[i] = b[i - idx]
 
-    if DEBUG:
-        print(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
+    debug(f"Functions len = {len(functions.funcs)}, types = {len(code.code)}")
     import_len = len(function_names)
     for i in range(len(functions.funcs)):
         function_list.append(
@@ -269,18 +274,16 @@ def init_module(mod: Module):
         element_section,
         [],
     )
-    if DEBUG:
-        print("*** Call(PyRun_SimpleString)")
-        print(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
-        print(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
-        print(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
+    debug("*** Call(PyRun_SimpleString)")
+    debug(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
+    debug(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
+    debug(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
     x = exports["PyRun_SimpleString"].x
     parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
     ptr = len(mem)
     mem.extend('print("abc")\0')
     parameters[0] = Value(ptr, ValType.I32)
-    if DEBUG:
-        print(f"Parameters: {parameters}")
+    debug(f"Parameters: {parameters}")
     exec_function(
         function_list[x].code,
         parameters,
@@ -332,6 +335,7 @@ def i32_add(a: int, b: int) -> int:
         s = -(-s & i32_mask)
     return s
 
+
 def i32_mul(a: int, b: int) -> int:
     a = a & i32_mask
     b = b & i32_mask
@@ -374,15 +378,21 @@ def i32_shr_s(a: int, b: int) -> int:
 
 class Jump:
     def __init__(self, label: int):
+        if label > 0:
+            pass
         self.label = label
+
     def __str__(self):
         return f"Jump(label={self.label})"
+
 
 class Skip:
     def __init__(self, label: int):
         self.label = label
+
     def __str__(self):
         return f"Skip(label={self.label})"
+
 
 Return = Jump(-1)
 
@@ -426,12 +436,28 @@ def exec_instruction(
     function_names: list[str],
     element_section: ElementSection,
     call_stack: list[str],
+    tab: int = 0,
 ) -> Optional[Jump]:
     try:
-        return exec_instruction_inner(inst, locals, stack, globals, mem, functions, typ, codes, import_functions, function_names, element_section, call_stack)
+        return exec_instruction_inner(
+            inst,
+            locals,
+            stack,
+            globals,
+            mem,
+            functions,
+            typ,
+            codes,
+            import_functions,
+            function_names,
+            element_section,
+            call_stack,
+            tab,
+        )
     except KeyboardInterrupt:
         print(f"Stack trace: {call_stack}")
         exit(1)
+
 
 def find_last_label(stack: list[any]) -> Optional[int]:
     i = len(stack) - 1
@@ -440,6 +466,7 @@ def find_last_label(stack: list[any]) -> Optional[int]:
             return i
         i -= 1
     return None
+
 
 def find_ith_label(stack: list[any], j: int) -> Optional[int]:
     i = len(stack) - 1
@@ -452,13 +479,17 @@ def find_ith_label(stack: list[any], j: int) -> Optional[int]:
         i -= 1
     return None
 
+
 def pop_to_label(stack, i=0):
     while stack and i >= 0:
         x = stack.pop()
         if isinstance(x, Label):
             i = i - 1
 
-def pop_stack(j: Optional[Jump|Skip], stack: list[Label|Value]) -> Optional[Jump|Skip]:
+
+def pop_stack(
+    j: Optional[Jump | Skip], stack: list[Label | Value]
+) -> Optional[Jump | Skip]:
     # we've already popped back to this level, so this is a no-op
     if isinstance(j, Skip):
         if j.label == 0:
@@ -466,8 +497,7 @@ def pop_stack(j: Optional[Jump|Skip], stack: list[Label|Value]) -> Optional[Jump
         else:
             return Skip(j.label - 1)
 
-    if DEBUG:
-        print(f"Popping back to label {j}")
+    debug(f"Popping back to label {j}")
     keep = None
     if j is None:
         i = find_last_label(stack)
@@ -502,45 +532,46 @@ def exec_instruction_inner(
     function_names: list[str],
     element_section: ElementSection,
     call_stack: list[str],
+    tab: int = 0,
 ) -> Optional[Jump]:
+    global block_counter
     global global_counter
-    if DEBUG:
-        print(
-            f"\n{global_counter} Executing {inst.opcode.name} {inst.subop}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
-        )
-        print(f"Stack: {stack}")
+    if global_counter == 6445:
+        pass
+    debug("")
+    debug(
+        f"{global_counter} Executing {inst.opcode.name} {inst.subop}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]",
+        tab,
+    )
+    debug(f"Stack: {stack}", tab)
     global_counter += 1
     # if global_counter > 4876:
     #     input("> ")
     if inst.opcode == Opcode.end or inst.opcode == Opcode.else_:
         pass
     elif inst.opcode == Opcode.local_get:
-        if DEBUG:
-            print(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}")
+        debug(f"Local get {inst.operands[0]} -> {locals[inst.operands[0]]}", tab)
         stack.append(locals[inst.operands[0]])
     elif inst.opcode == Opcode.i32_load:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
-        if DEBUG:
-            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}")
+        debug(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}", tab)
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i64_load:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
-        if DEBUG:
-            print(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}")
+        debug(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}", tab)
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.i64_store:
         offset = inst.operands[1]
         val = stack.pop().val & i64_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}")
+        debug(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}", tab)
         data = struct.pack("<Q", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store:
@@ -548,8 +579,7 @@ def exec_instruction_inner(
         val = stack.pop().val & i32_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> 0x{val:x}")
+        debug(f"Store 0x{addr:x} -> 0x{val:x}", tab)
         data = struct.pack("<I", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store8:
@@ -557,8 +587,7 @@ def exec_instruction_inner(
         val = stack.pop().val & i8_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        if DEBUG:
-            print(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}")
+        debug(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}", tab)
         data = struct.pack("<B", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_load8_u:
@@ -566,8 +595,7 @@ def exec_instruction_inner(
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
-        if DEBUG:
-            print(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}")
+        debug(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}", tab)
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load8_s:
         offset = inst.operands[1]
@@ -591,29 +619,24 @@ def exec_instruction_inner(
         idx = inst.operands[0]
         assert not isinstance(stack[-1], Label)
         locals[idx] = stack.pop()
-        if DEBUG:
-            print(f"  Set local: [{idx}] <- {locals[idx]}")
+        debug(f"  Set local: [{idx}] <- {locals[idx]}", tab)
     elif inst.opcode == Opcode.local_tee:
         idx = inst.operands[0]
         assert not isinstance(stack[-1], Label)
         locals[idx] = stack[-1]
-        if DEBUG:
-            print(f"  tee locals[{idx}] = {stack[-1]}")
+        debug(f"  tee locals[{idx}] = {stack[-1]}", tab)
     elif inst.opcode == Opcode.global_get:
         idx = inst.operands[0]
-        if DEBUG:
-            print(f"  get globals[{idx}] => {globals[idx]}")
+        debug(f"  get globals[{idx}] => {globals[idx]}", tab)
         stack.append(globals[idx])
     elif inst.opcode == Opcode.global_set:
         idx = inst.operands[0]
         assert not isinstance(stack[-1], Label)
         globals[idx] = stack.pop()
-        if DEBUG:
-            print(f"  set globals[{idx}] <= {globals[idx]}")
+        debug(f"  set globals[{idx}] <= {globals[idx]}", tab)
     elif inst.opcode == Opcode.i32_const:
         c = inst.operands[0]
-        if DEBUG:
-            print(f"  push 0x{c:x} ({inst})")
+        debug(f"  push 0x{c:x} ({inst})", tab)
         stack.append(Value(c, ValType.I32))
     elif inst.opcode == Opcode.i64_const:
         c = inst.operands[0]
@@ -621,38 +644,32 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_add:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}")
+        debug(f"  add: {a.val} + {b.val} = {i32_add(a.val, b.val)}", tab)
         stack.append(Value(i32_add(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_sub:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}")
+        debug(f"  sub: {a.val} - {b.val} = {i32_add(a.val, -b.val)}", tab)
         stack.append(Value(i32_add(a.val, -b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_mul:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}")
+        debug(f"  mul: {a.val} * {b.val} = {i32_mul(a.val, b.val)}", tab)
         stack.append(Value(i32_mul(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_u:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}")
+        debug(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}", tab)
         stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_s:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}")
+        debug(f"  div: {a.val} / {b.val} = {i32_div_s(a.val, b.val)}", tab)
         stack.append(Value(i32_div_s(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_and:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  and: {a.val} & {b.val} -> {a.val & b.val}")
+        debug(f"  and: {a.val} & {b.val} -> {a.val & b.val}", tab)
         stack.append(Value(a.val & b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_or:
         b = stack.pop()
@@ -661,8 +678,7 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_xor:
         b = stack.pop()
         a = stack.pop()
-        if DEBUG:
-            print(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}")
+        debug(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}", tab)
         stack.append(Value(a.val ^ b.val, ValType.I32))
     elif inst.opcode == Opcode.i32_shl:
         b = stack.pop()
@@ -691,12 +707,10 @@ def exec_instruction_inner(
         b = i32_to_u32(stack.pop().val)
         a = i32_to_u32(stack.pop().val)
         if a <= b:
-            if DEBUG:
-                print(f"  le_u {a} <= {b} => True")
+            debug(f"  le_u {a} <= {b} => True", tab)
             stack.append(Value(1, ValType.I32))
         else:
-            if DEBUG:
-                print(f"  le_u {a} <= {b} => False")
+            debug(f"  le_u {a} <= {b} => False", tab)
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_lt_s:
         b = i32_to_s32(stack.pop().val)
@@ -707,16 +721,14 @@ def exec_instruction_inner(
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_eqz:
         a = stack.pop()
-        if DEBUG:
-            print(f"  eqz? {a.val} -> {a.val == 0}")
+        debug(f"  eqz? {a.val} -> {a.val == 0}", tab)
         if a.val == 0:
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i64_eqz:
         a = stack.pop()
-        if DEBUG:
-            print(f"  eqz? {a.val} -> {a.val == 0}")
+        debug(f"  eqz? {a.val} -> {a.val == 0}", tab)
         if a.val == 0:
             stack.append(Value(1, ValType.I32))
         else:
@@ -760,12 +772,10 @@ def exec_instruction_inner(
         b = stack.pop()
         a = stack.pop()
         if i32_to_u32(a.val) >= i32_to_u32(b.val):
-            if DEBUG:
-                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1")
+            debug(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 1", tab)
             stack.append(Value(1, ValType.I32))
         else:
-            if DEBUG:
-                print(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0")
+            debug(f"  {i32_to_u32(a.val)} >= {i32_to_u32(b.val)} ? => 0", tab)
             stack.append(Value(0, ValType.I32))
     elif inst.opcode == Opcode.i32_ge_s:
         b = stack.pop()
@@ -796,12 +806,10 @@ def exec_instruction_inner(
         b = stack.pop()
         a = stack.pop()
         if c.val == 0:
-            if DEBUG:
-                print(f"  select({a}, {b}, {c}) -> {b}")
+            debug(f"select({a}, {b}, {c}) -> {b}", tab)
             stack.append(b)
         else:
-            if DEBUG:
-                print(f"  select({a}, {b}, {c}) -> {a}")
+            debug(f"select({a}, {b}, {c}) -> {a}", tab)
             stack.append(a)
     elif inst.opcode == Opcode.drop:
         stack.pop()
@@ -809,53 +817,48 @@ def exec_instruction_inner(
         stack.append(Value(len(mem) & i32_mask, ValType.I32))
     elif inst.opcode == Opcode.br:
         label = inst.operands[0].x
-        if DEBUG:
-            print(f"br {label}")
+        debug(f"br {label}", tab)
         assert sum(1 for x in stack if isinstance(x, Label)) >= label + 1
         return Jump(label)
     elif inst.opcode == Opcode.br_if:
         x = stack.pop()
         label = inst.operands[0].x
-        if DEBUG:
-            print(f"br_if {x} {label}")
+        debug(f"br_if {x} {label}")
         if x.val != 0:
-            if DEBUG:
-                print(f"Branch was true, so jumping to {label}")
+            debug(f"Branch was true, so jumping to {label}", tab)
             assert sum(1 for x in stack if isinstance(x, Label)) >= label + 1
             return Jump(label)
         else:
-            if DEBUG:
-                print(f"Branch not taken")
+            debug(f"Branch not taken", tab)
     elif inst.opcode == Opcode.br_table:
         x = stack.pop()
         labels = inst.operands[0]
         default = inst.operands[1]
-        if DEBUG:
-            print(f"  br_table labels={labels} default={default} val={x.val}")
+        debug(f"br_table labels={labels} default={default} val={x.val}", tab)
         if 0 <= x.val < len(labels):
-            if DEBUG:
-                print(f"  br_table taking label {labels[x.val]} -> {labels[x.val].x}")
+            debug(f"br_table taking label {labels[x.val]} -> {labels[x.val].x}", tab)
             assert sum(1 for x in stack if isinstance(x, Label)) >= labels[x.val].x + 1
             return Jump(labels[x.val].x)
         else:
-            if DEBUG:
-                print(f"  br_table taking default")
+            debug(f"br_table taking default", tab)
             assert sum(1 for x in stack if isinstance(x, Label)) >= default.x + 1
             return Jump(default.x)
     elif inst.opcode == Opcode.if_:
         bt = inst.subop
-        label = new_label(bt, "if")
         then = inst.operands[0]
         else_ = inst.operands[1]
         val = stack.pop().val
         if val:
-            if DEBUG:
-                print(f"Pushing label: {label}")
+            block_idx = block_counter
+            block_counter += 1
+            debug(f"Entering then {block_idx}", tab)
+            label = new_label(bt, f"if {block_idx}")
+            debug(f"Pushing label: {label}", tab)
             stack.append(label)
-            if DEBUG:
-                print("  if statement was true")
+            debug("if statement was true", tab)
             j = None
-            for inst2 in then:
+            for inst_idx, inst2 in enumerate(then):
+                debug(f"Then {block_idx} instruction {inst_idx}", tab)
                 j = exec_instruction(
                     inst2,
                     locals,
@@ -869,6 +872,7 @@ def exec_instruction_inner(
                     function_names,
                     element_section,
                     call_stack,
+                    tab + 1,
                 )
                 if j is Return:
                     return Return
@@ -876,13 +880,16 @@ def exec_instruction_inner(
                     break
             return pop_stack(j, stack)
         elif else_:
-            if DEBUG:
-                print(f"Pushing label: {label}")
+            block_idx = block_counter
+            block_counter += 1
+            label = new_label(bt, f"else {block_idx}", tab)
+            debug(f"Entering else {block_idx}", tab)
+            debug(f"Pushing label: {label}", tab)
             stack.append(label)
-            if DEBUG:
-                print("  if statement was false and else was defined")
+            debug("if statement was false and else was defined", tab)
             j = None
-            for inst2 in else_.instructions:
+            for inst_idx, inst2 in enumerate(else_.instructions):
+                debug(f"Else {block_idx} instruction {inst_idx}", tab)
                 j = exec_instruction(
                     inst2,
                     locals,
@@ -896,6 +903,7 @@ def exec_instruction_inner(
                     function_names,
                     element_section,
                     call_stack,
+                    tab + 1,
                 )
                 if j is Return:
                     return j
@@ -903,15 +911,17 @@ def exec_instruction_inner(
                     break
             return pop_stack(j, stack)
         else:
-            if DEBUG:
-                print("  if statement was false (but no else)")
+            debug("if statement was false (but no else)", tab)
     elif inst.opcode == Opcode.block:
+        block_idx = block_counter
+        block_counter += 1
+        debug(f"Entering block {block_idx}", tab)
         block = inst.operands[0]
-        stack.append(new_label(inst.subop, "block"))
-        if DEBUG:
-            print(f"Pushing label: {stack[-1]}")
+        stack.append(new_label(inst.subop, f"block {block_idx}"))
+        debug(f"Pushing label: {stack[-1]}", tab)
         j = None
-        for inst2 in block:
+        for inst_idx, inst2 in enumerate(block):
+            debug(f"Block {block_idx} instruction {inst_idx}", tab)
             j = exec_instruction(
                 inst2,
                 locals,
@@ -925,6 +935,7 @@ def exec_instruction_inner(
                 function_names,
                 element_section,
                 call_stack,
+                tab + 1,
             )
             if j is Return:
                 return j
@@ -933,16 +944,26 @@ def exec_instruction_inner(
         return pop_stack(j, stack)
 
     elif inst.opcode == Opcode.loop:
+        block_idx = block_counter
+        block_counter += 1
+        debug(f"Entering loop {block_idx}", tab)
         block = inst.operands[0]
-        stack.append(new_label(inst.subop, "loop"))
-        if DEBUG:
-            print(f"Pushing label: {stack[-1]}")
+        label = new_label(inst.subop, f"loop {block_idx}")
+        stack.append(label)
+        debug(f"Pushing label: {stack[-1]}", tab)
         j = None
         continue_loop = True
+        debug("*** begin loop", tab)
         while continue_loop:
-            if DEBUG:
-                print("*** begin loop")
-            for inst2 in block:
+            debug("*** continue loop", tab)
+            # restore label if it was lost
+            # TODO: this will prevent a loop from "returning" a value, which
+            # may or may not be possible according to the spec
+            if label not in stack:
+                debug(f"Repushing label: {stack[-1]}", tab)
+                stack.append(label)
+            for inst_idx, inst2 in enumerate(block):
+                debug(f"Loop {block_idx} instruction {inst_idx}", tab)
                 j = exec_instruction(
                     inst2,
                     locals,
@@ -956,6 +977,7 @@ def exec_instruction_inner(
                     function_names,
                     element_section,
                     call_stack,
+                    tab + 1,
                 )
                 if j is Return:
                     return j
@@ -988,14 +1010,13 @@ def exec_instruction_inner(
             parameters.reverse()
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
                 fname = function_names[fidx.x]
-                if DEBUG:
-                    print(
-                        f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
-                    )
+                debug(
+                    f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})",
+                    tab,
+                )
             else:
                 fname = f"f_{fidx.x}"
-                if DEBUG:
-                    print(f"\n\n*** Call f_{fidx.x}({parameters})")
+                debug(f"\n\n*** Call f_{fidx.x}({parameters})", tab)
             return exec_function(
                 code2,
                 parameters,
@@ -1015,8 +1036,7 @@ def exec_instruction_inner(
         # tidx = inst.operands[0].x
         # t = typ.function_types[tidx]
         table_idx = stack.pop().val
-        if DEBUG:
-            print(f"*** Call indirect table idx {table_idx}")
+        debug(f"*** Call indirect table idx {table_idx}", tab)
         table = element_section.elemsec[0]
         fidx = table.y[table_idx]
         f = functions[fidx.x]
@@ -1025,12 +1045,10 @@ def exec_instruction_inner(
         else:
             if fidx.x < len(function_names) and function_names[fidx.x] != "?":
                 fname = function_names[fidx.x]
-                if DEBUG:
-                    print(f"*** Call({function_names[fidx.x]})")
+                debug(f"*** Call({function_names[fidx.x]})", tab)
             else:
                 fname = f"f_{fidx.x}"
-                if DEBUG:
-                    print(f"*** Call(f_{fidx.x})")
+                debug(f"*** Call(f_{fidx.x})", tab)
             code2 = f.code
             parameter_types = f.parameter_types
             # type_idx = functions.funcs[fidx.x].x
@@ -1058,10 +1076,9 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.return_:
         return Return
     else:
-        if DEBUG:
-            print(f"Locals: {locals}")
-            print(f"Stack: {stack}")
-            print(f"Current instruction: {inst}")
+        debug(f"Locals: {locals}", tab)
+        debug(f"Stack: {stack}", tab)
+        debug(f"Current instruction: {inst}", tab)
         raise (ValueError(f"Unknown instruction: {inst}"))
 
 
@@ -1089,8 +1106,7 @@ def exec_function(
     instructions = code.e.instructions
     pc = 0
     new_stack = []
-    if DEBUG:
-        print(f"Pushing label: {None}")
+    debug(f"Pushing label: {None}")
     new_stack.append(Label(None, name="function start"))
     j = None
     while pc < len(instructions):
@@ -1110,19 +1126,17 @@ def exec_function(
         )
         if j is not None:
             if j is Return:
-                if DEBUG:
-                    print("Return")
+                debug("Return")
                 break
         pc += 1
     if result_types:
         assert len(new_stack) >= len(result_types)
-        keep = new_stack[-len(result_types):]
+        keep = new_stack[-len(result_types) :]
         stack.extend(keep)
     else:
         keep = []
     fname = call_stack[-1] if call_stack else ""
-    if DEBUG:
-        print(f"*** ({fname}) Return: {keep}")
+    debug(f"*** ({fname}) Return: {keep}")
 
 
 def read_module(f: bytes) -> Module:
@@ -1139,60 +1153,43 @@ def read_module(f: bytes) -> Module:
         current += section_size
         if section_id == CUSTOM_SECTION_ID:
             section = parse_custom_section(contents)
-            if DEBUG:
-                print(
-                    f"Custom section name: {section.name}, length={len(section.bytes)}"
-                )
+            debug(f"Custom section name: {section.name}, length={len(section.bytes)}")
         elif section_id == TYPE_SECTION_ID:
             section = parse_type_section(contents)
-            if DEBUG:
-                print(f"Type section, num functions = {len(section.function_types)}")
+            debug(f"Type section, num functions = {len(section.function_types)}")
         elif section_id == IMPORT_SECTION_ID:
             section = parse_import_section(contents)
-            if DEBUG:
-                print(f"Import section, {len(section.imports)} imports")
+            debug(f"Import section, {len(section.imports)} imports")
         elif section_id == FUNCTION_SECTION_ID:
             section = parse_function_section(contents)
-            if DEBUG:
-                print(f"Function section, {len(section.funcs)} functions")
+            debug(f"Function section, {len(section.funcs)} functions")
         elif section_id == TABLE_SECTION_ID:
             section = parse_table_section(contents)
-            if DEBUG:
-                print(f"Table section, {section.tables}")
+            debug(f"Table section, {section.tables}")
         elif section_id == MEMORY_SECTION_ID:
             section = parse_memory_section(contents)
-            if DEBUG:
-                print(f"Memory section, {section.memories}")
+            debug(f"Memory section, {section.memories}")
         elif section_id == GLOBAL_SECTION_ID:
             section = parse_global_section(contents)
-            if DEBUG:
-                print(f"Global section, {len(section.globals)} globals")
+            debug(f"Global section, {len(section.globals)} globals")
         elif section_id == EXPORT_SECTION_ID:
             section = parse_export_section(contents)
-            if DEBUG:
-                print(f"Export section, {len(section.exports)} exports")
+            debug(f"Export section, {len(section.exports)} exports")
         elif section_id == START_SECTION_ID:
             section = parse_start_section(contents)
-            if DEBUG:
-                print(f"Start section, {section.start}")
+            debug(f"Start section, {section.start}")
         elif section_id == ELEMENT_SECTION_ID:
             section = parse_element_section(contents)
-            if DEBUG:
-                print(f"Element section, {len(section.elemsec)} elements")
+            debug(f"Element section, {len(section.elemsec)} elements")
         elif section_id == CODE_SECTION_ID:
             section = parse_code_section(contents)
-            if DEBUG:
-                print(f"Code section, {len(section.code)} entries")
+            debug(f"Code section, {len(section.code)} entries")
         elif section_id == DATA_SECTION_ID:
             section = parse_data_section(contents)
             data_bytes = sum(len(x.b) for x in section.seg)
-            if DEBUG:
-                print(
-                    f"Data section, {len(section.seg)} entries, size {data_bytes} bytes"
-                )
+            debug(f"Data section, {len(section.seg)} entries, size {data_bytes} bytes")
         else:
-            if DEBUG:
-                print(f"Section {section_id}, size = {section_size}")
+            debug(f"Section {section_id}, size = {section_size}")
             section = Section(section_id, contents)
         sections.append(section)
     return Module(sections)
@@ -1650,8 +1647,7 @@ def read_instruction(r: BinaryIO) -> Op:
     elif op == 0x44:
         n = read_f64(r)
         return Op(op, None, (n,))
-    if DEBUG:
-        print(f"op = {op:x}")
+    debug(f"op = {op:x}")
     assert False
 
 
@@ -1813,12 +1809,15 @@ def read_f64(f: BinaryIO) -> float:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("wasm_file", help="WASM file to execute")
-    parser.add_argument("--debug", help="Enable debug output", action="store_true")
-    args = parser.parse_args()
-    DEBUG = args.debug
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("wasm_file", help="WASM file to execute")
+    # parser.add_argument("--debug", help="Enable debug output", action="store_true")
+    # args = parser.parse_args()
+    # DEBUG = args.debug
+    DEBUG = True
 
-    with open(args.wasm_file, "rb") as fin:
+    # with open(args.wasm_file, "rb") as fin:
+    #     module = read_module(fin.read())
+    with open("pyodide.asm.wasm", "rb") as fin:
         module = read_module(fin.read())
     init_module(module)
