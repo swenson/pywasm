@@ -67,6 +67,11 @@ ELEMENT_SECTION_ID = 9
 CODE_SECTION_ID = 10
 DATA_SECTION_ID = 11
 
+Label = namedtuple('Label', ('valtype', 'name'))
+def new_label(bt, name):
+    if bt == 0x40:
+        return Label(None, name)
+    return Label(ValType(bt), name)
 
 class ValType(IntEnum):
     I32 = 0x7F
@@ -251,6 +256,7 @@ def init_module(mod: Module):
     stack = []
     exec_function(
         function_list[start.start.x].code,
+        [],
         parameters,
         stack,
         globals,
@@ -278,6 +284,7 @@ def init_module(mod: Module):
     exec_function(
         function_list[x].code,
         parameters,
+        function_list[x].result_types,
         stack,
         globals,
         mem,
@@ -368,6 +375,16 @@ def i32_shr_s(a: int, b: int) -> int:
 class Jump:
     def __init__(self, label: int):
         self.label = label
+    def __str__(self):
+        return f"Jump(label={self.label})"
+
+class Skip:
+    def __init__(self, label: int):
+        self.label = label
+    def __str__(self):
+        return f"Skip(label={self.label})"
+
+Return = Jump(-1)
 
 
 global_counter = 0
@@ -416,6 +433,61 @@ def exec_instruction(
         print(f"Stack trace: {call_stack}")
         exit(1)
 
+def find_last_label(stack: list[any]) -> Optional[int]:
+    i = len(stack) - 1
+    while i >= 0:
+        if isinstance(stack[i], Label):
+            return i
+        i -= 1
+    return None
+
+def find_ith_label(stack: list[any], j: int) -> Optional[int]:
+    i = len(stack) - 1
+    while i >= 0:
+        if isinstance(stack[i], Label):
+            if j == 0:
+                return i
+            else:
+                return find_ith_label(stack[:i], j - 1)
+        i -= 1
+    return None
+
+def pop_to_label(stack, i=0):
+    while stack and i >= 0:
+        x = stack.pop()
+        if isinstance(x, Label):
+            i = i - 1
+
+def pop_stack(j: Optional[Jump|Skip], stack: list[Label|Value]) -> Optional[Jump|Skip]:
+    # we've already popped back to this level, so this is a no-op
+    if isinstance(j, Skip):
+        if j.label == 0:
+            return None
+        else:
+            return Skip(j.label - 1)
+
+    if DEBUG:
+        print(f"Popping back to label {j}")
+    keep = None
+    if j is None:
+        i = find_last_label(stack)
+        if i is None:
+            raise ValueError(f"Stack did not contain label: {stack}")
+        if stack[i].valtype:
+            keep = stack.pop()
+        pop_to_label(stack)
+    else:
+        i = find_ith_label(stack, j.label)
+        if i is None:
+            raise ValueError(f"Was not able to find {j.label} label in stack {stack}")
+        if stack[i].valtype:
+            keep = stack.pop()
+        pop_to_label(stack, j.label)
+    if keep is not None:
+        stack.append(keep)
+    if j is not None and j.label:
+        return Skip(j.label - 1)
+
 
 def exec_instruction_inner(
     inst: "Op",
@@ -434,8 +506,9 @@ def exec_instruction_inner(
     global global_counter
     if DEBUG:
         print(
-            f"{global_counter} Executing {inst.opcode.name}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack[-1:])}]"
+            f"\n{global_counter} Executing {inst.opcode.name} {inst.subop}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]"
         )
+        print(f"Stack: {stack}")
     global_counter += 1
     # if global_counter > 4876:
     #     input("> ")
@@ -516,11 +589,13 @@ def exec_instruction_inner(
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
+        assert not isinstance(stack[-1], Label)
         locals[idx] = stack.pop()
         if DEBUG:
             print(f"  Set local: [{idx}] <- {locals[idx]}")
     elif inst.opcode == Opcode.local_tee:
         idx = inst.operands[0]
+        assert not isinstance(stack[-1], Label)
         locals[idx] = stack[-1]
         if DEBUG:
             print(f"  tee locals[{idx}] = {stack[-1]}")
@@ -531,6 +606,7 @@ def exec_instruction_inner(
         stack.append(globals[idx])
     elif inst.opcode == Opcode.global_set:
         idx = inst.operands[0]
+        assert not isinstance(stack[-1], Label)
         globals[idx] = stack.pop()
         if DEBUG:
             print(f"  set globals[{idx}] <= {globals[idx]}")
@@ -733,12 +809,23 @@ def exec_instruction_inner(
         stack.append(Value(len(mem) & i32_mask, ValType.I32))
     elif inst.opcode == Opcode.br:
         label = inst.operands[0].x
+        if DEBUG:
+            print(f"br {label}")
+        assert sum(1 for x in stack if isinstance(x, Label)) >= label + 1
         return Jump(label)
     elif inst.opcode == Opcode.br_if:
         x = stack.pop()
         label = inst.operands[0].x
+        if DEBUG:
+            print(f"br_if {x} {label}")
         if x.val != 0:
+            if DEBUG:
+                print(f"Branch was true, so jumping to {label}")
+            assert sum(1 for x in stack if isinstance(x, Label)) >= label + 1
             return Jump(label)
+        else:
+            if DEBUG:
+                print(f"Branch not taken")
     elif inst.opcode == Opcode.br_table:
         x = stack.pop()
         labels = inst.operands[0]
@@ -748,17 +835,26 @@ def exec_instruction_inner(
         if 0 <= x.val < len(labels):
             if DEBUG:
                 print(f"  br_table taking label {labels[x.val]} -> {labels[x.val].x}")
+            assert sum(1 for x in stack if isinstance(x, Label)) >= labels[x.val].x + 1
             return Jump(labels[x.val].x)
         else:
             if DEBUG:
                 print(f"  br_table taking default")
+            assert sum(1 for x in stack if isinstance(x, Label)) >= default.x + 1
             return Jump(default.x)
     elif inst.opcode == Opcode.if_:
+        bt = inst.subop
+        label = new_label(bt, "if")
         then = inst.operands[0]
         else_ = inst.operands[1]
-        if stack.pop().val:
+        val = stack.pop().val
+        if val:
+            if DEBUG:
+                print(f"Pushing label: {label}")
+            stack.append(label)
             if DEBUG:
                 print("  if statement was true")
+            j = None
             for inst2 in then:
                 j = exec_instruction(
                     inst2,
@@ -774,16 +870,18 @@ def exec_instruction_inner(
                     element_section,
                     call_stack,
                 )
-                if j is not None:
-                    if j.label == -1:
-                        return j
-                    elif j.label == 0:
-                        break
-                    else:
-                        return Jump(j.label - 1)
+                if j is Return:
+                    return Return
+                elif j is not None:
+                    break
+            return pop_stack(j, stack)
         elif else_:
             if DEBUG:
+                print(f"Pushing label: {label}")
+            stack.append(label)
+            if DEBUG:
                 print("  if statement was false and else was defined")
+            j = None
             for inst2 in else_.instructions:
                 j = exec_instruction(
                     inst2,
@@ -799,18 +897,20 @@ def exec_instruction_inner(
                     element_section,
                     call_stack,
                 )
-                if j is not None:
-                    if j.label == -1:
-                        return j
-                    elif j.label == 0:
-                        break
-                    else:
-                        return Jump(j.label - 1)
+                if j is Return:
+                    return j
+                elif j is not None:
+                    break
+            return pop_stack(j, stack)
         else:
             if DEBUG:
                 print("  if statement was false (but no else)")
     elif inst.opcode == Opcode.block:
         block = inst.operands[0]
+        stack.append(new_label(inst.subop, "block"))
+        if DEBUG:
+            print(f"Pushing label: {stack[-1]}")
+        j = None
         for inst2 in block:
             j = exec_instruction(
                 inst2,
@@ -826,16 +926,20 @@ def exec_instruction_inner(
                 element_section,
                 call_stack,
             )
-            if j is not None:
-                if j.label == -1:
-                    return j
-                elif j.label == 0:
-                    break
-                else:
-                    return Jump(j.label - 1)
+            if j is Return:
+                return j
+            elif j is not None:
+                break
+        return pop_stack(j, stack)
+
     elif inst.opcode == Opcode.loop:
         block = inst.operands[0]
-        while True:
+        stack.append(new_label(inst.subop, "loop"))
+        if DEBUG:
+            print(f"Pushing label: {stack[-1]}")
+        j = None
+        continue_loop = True
+        while continue_loop:
             if DEBUG:
                 print("*** begin loop")
             for inst2 in block:
@@ -853,15 +957,18 @@ def exec_instruction_inner(
                     element_section,
                     call_stack,
                 )
-                if j is not None:
-                    if j.label == -1:
-                        return j
-                    elif j.label == 0:
+                if j is Return:
+                    return j
+                elif j is not None:
+                    if j.label == 0:
+                        j = None
                         break  # back to beginning of loop
                     else:
-                        return Jump(j.label - 1)
+                        continue_loop = False
+                        break
             else:
                 break
+        return pop_stack(j, stack)
 
     elif inst.opcode == Opcode.call:
         fidx = inst.operands[0]
@@ -883,15 +990,16 @@ def exec_instruction_inner(
                 fname = function_names[fidx.x]
                 if DEBUG:
                     print(
-                        f"*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
+                        f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})"
                     )
             else:
                 fname = f"f_{fidx.x}"
                 if DEBUG:
-                    print(f"*** Call f_{fidx.x}({parameters})")
+                    print(f"\n\n*** Call f_{fidx.x}({parameters})")
             return exec_function(
                 code2,
                 parameters,
+                f.result_types,
                 stack,
                 globals,
                 mem,
@@ -935,6 +1043,7 @@ def exec_instruction_inner(
             return exec_function(
                 code2,
                 parameters,
+                f.result_types,
                 stack,
                 globals,
                 mem,
@@ -947,7 +1056,7 @@ def exec_instruction_inner(
                 call_stack + [fname],
             )
     elif inst.opcode == Opcode.return_:
-        return Jump(-1)
+        return Return
     else:
         if DEBUG:
             print(f"Locals: {locals}")
@@ -959,6 +1068,7 @@ def exec_instruction_inner(
 def exec_function(
     code: Func,
     parameters: list[Value],
+    result_types: list[ValType],
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
@@ -978,11 +1088,16 @@ def exec_function(
             locals.append(Value(default_values[local_type.t], local_type.t))
     instructions = code.e.instructions
     pc = 0
+    new_stack = []
+    if DEBUG:
+        print(f"Pushing label: {None}")
+    new_stack.append(Label(None, name="function start"))
+    j = None
     while pc < len(instructions):
         j = exec_instruction(
             instructions[pc],
             locals,
-            stack,
+            new_stack,
             globals,
             mem,
             functions,
@@ -994,19 +1109,20 @@ def exec_function(
             call_stack,
         )
         if j is not None:
-            if j.label == -1:
+            if j is Return:
                 if DEBUG:
                     print("Return")
                 break
-            return j
         pc += 1
-    if len(stack) == 0:
-        last = "?"
+    if result_types:
+        assert len(new_stack) >= len(result_types)
+        keep = new_stack[-len(result_types):]
+        stack.extend(keep)
     else:
-        last = stack[-1]
+        keep = []
     fname = call_stack[-1] if call_stack else ""
     if DEBUG:
-        print(f"*** ({fname}) Return: {last}")
+        print(f"*** ({fname}) Return: {keep}")
 
 
 def read_module(f: bytes) -> Module:
