@@ -1126,7 +1126,7 @@ def exec_function(
         )
         if j is not None:
             if j is Return:
-                debug("Return")
+                debug("Got return")
                 break
         pc += 1
     if result_types:
