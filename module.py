@@ -274,16 +274,10 @@ def init_module(mod: Module):
         element_section,
         [],
     )
-    debug("*** Call(PyRun_SimpleString)")
-    debug(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
-    debug(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
-    debug(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
-    x = exports["PyRun_SimpleString"].x
-    parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
-    ptr = len(mem)
-    mem.extend('print("abc")\0')
-    parameters[0] = Value(ptr, ValType.I32)
-    debug(f"Parameters: {parameters}")
+
+    debug("*** Call __wasm_call_ctors()")
+    x = exports["__wasm_call_ctors"].x
+    parameters = []
     exec_function(
         function_list[x].code,
         parameters,
@@ -297,8 +291,75 @@ def init_module(mod: Module):
         import_functions,
         function_names,
         element_section,
-        ["PyRun_SimpleString"],
+        ["__wasm_call_ctors"],
     )
+
+    debug("*** Call __wasm_apply_data_relocs()")
+    x = exports["__wasm_apply_data_relocs"].x
+    parameters = []
+    exec_function(
+        function_list[x].code,
+        parameters,
+        function_list[x].result_types,
+        stack,
+        globals,
+        mem,
+        function_list,
+        typ,
+        code,
+        import_functions,
+        function_names,
+        element_section,
+        ["wasm_apply_data_relocs"],
+    )
+
+    # debug("*** Call Py_Initialize()")
+    # x = exports["Py_Initialize"].x
+    # parameters = []
+    # # ptr = len(mem)
+    # # mem.extend('print("abc")\0')
+    # # parameters[0] = Value(ptr, ValType.I32)
+    # exec_function(
+    #     function_list[x].code,
+    #     parameters,
+    #     function_list[x].result_types,
+    #     stack,
+    #     globals,
+    #     mem,
+    #     function_list,
+    #     typ,
+    #     code,
+    #     import_functions,
+    #     function_names,
+    #     element_section,
+    #     ["Py_Initialize"],
+    # )
+
+    # debug("*** Call(PyRun_SimpleString)")
+    # debug(f"btw PyRun_SimpleStringFlags = {exports['PyRun_SimpleStringFlags'].x}")
+    # debug(f"btw PyObject_Malloc = {exports['PyObject_Malloc'].x}")
+    # debug(f"btw _ZTVSt12length_error = {exports['_ZTVSt12length_error'].x}")
+    # x = exports["PyRun_SimpleString"].x
+    # parameters = [Value(default_values[t], t) for t in function_list[x].parameter_types]
+    # ptr = len(mem)
+    # mem.extend('print("abc")\0')
+    # parameters[0] = Value(ptr, ValType.I32)
+    # debug(f"Parameters: {parameters}")
+    # exec_function(
+    #     function_list[x].code,
+    #     parameters,
+    #     function_list[x].result_types,
+    #     stack,
+    #     globals,
+    #     mem,
+    #     function_list,
+    #     typ,
+    #     code,
+    #     import_functions,
+    #     function_names,
+    #     element_section,
+    #     ["PyRun_SimpleString"],
+    # )
 
 
 i64_mask = 0xFFFFFFFFFFFFFFFF
@@ -519,6 +580,15 @@ def pop_stack(
         return Skip(j.label - 1)
 
 
+def function_id(num: int) -> str:
+    def fid(num: int) -> str:
+        if num < 26:
+            return chr(ord('a') + num)
+        else:
+            return chr(ord('a') + num % 26) + fid(num // 26)
+    return fid(num - 26)
+
+
 def exec_instruction_inner(
     inst: "Op",
     locals: list[Value],
@@ -538,6 +608,10 @@ def exec_instruction_inner(
     global global_counter
     if global_counter == 6445:
         pass
+    if '_PyErr_Format' in call_stack:
+        exit(1)
+    if call_stack.count('_PyErr_SetObject') == 2:
+        exit(1)
     debug("")
     debug(
         f"{global_counter} Executing {inst.opcode.name} {inst.subop}, stack length {len(stack)}, memory length {len(mem)}, call stack [{','.join(call_stack)}]",
@@ -994,10 +1068,12 @@ def exec_instruction_inner(
 
     elif inst.opcode == Opcode.call:
         fidx = inst.operands[0]
-
         f = functions[fidx.x]
         if isinstance(f, ImportFunction):
-            raise ValueError("Not supported yet: calling function %d" % fidx.x)
+            return call_imported_function(fidx.x, function_names[fidx.x], stack,
+                                          mem,
+                                          tab)
+            # raise ValueError("Not supported yet: calling imported function %d -> %s" % (fidx.x, function_names[fidx.x]))
         else:
             code2 = f.code
             parameter_types = f.parameter_types
@@ -1015,8 +1091,8 @@ def exec_instruction_inner(
                     tab,
                 )
             else:
-                fname = f"f_{fidx.x}"
-                debug(f"\n\n*** Call f_{fidx.x}({parameters})", tab)
+                fname = f"f_{function_id(fidx.x)}"
+                debug(f"\n\n*** Call f_{function_id(fidx.x)}({parameters})", tab)
             return exec_function(
                 code2,
                 parameters,
@@ -1033,13 +1109,16 @@ def exec_instruction_inner(
                 call_stack + [fname],
             )
     elif inst.opcode == Opcode.call_indirect:
-        # tidx = inst.operands[0].x
+        typ_idx = inst.operands[0].x
         # t = typ.function_types[tidx]
-        table_idx = stack.pop().val
-        debug(f"*** Call indirect table idx {table_idx}", tab)
-        table = element_section.elemsec[0]
-        fidx = table.y[table_idx]
+        table_idx = 0 # WebAssembly v1 requires this
+        table = element_section.elemsec[table_idx]
+        fidx = table.y[typ_idx]
         f = functions[fidx.x]
+        print(inst)
+        debug(f"*** Call indirect table idx {table_idx} {typ_idx} {fidx.x} -> {function_names[fidx.x]}", tab)
+        if fidx.x == 0:
+            exit(1)
         if isinstance(f, ImportFunction):
             raise ValueError("Not supported yet: calling function %d" % fidx.x)
         else:
@@ -1047,17 +1126,19 @@ def exec_instruction_inner(
                 fname = function_names[fidx.x]
                 debug(f"*** Call({function_names[fidx.x]})", tab)
             else:
-                fname = f"f_{fidx.x}"
-                debug(f"*** Call(f_{fidx.x})", tab)
+                fname = f"f_{function_id(fidx.x)}"
+                debug(f"*** Call(f_{function_id(fidx.x)})", tab)
             code2 = f.code
             parameter_types = f.parameter_types
             # type_idx = functions.funcs[fidx.x].x
             # parameter_types = typ.function_types[type_idx].parameter_types
+            debug(f"Parameters types: {parameter_types}", tab)
 
             parameters = []
             for i in range(len(parameter_types)):
                 parameters.append(stack.pop())
             parameters.reverse()
+            debug(f"Parameters: {parameters}", tab)
             return exec_function(
                 code2,
                 parameters,
@@ -1080,6 +1161,24 @@ def exec_instruction_inner(
         debug(f"Stack: {stack}", tab)
         debug(f"Current instruction: {inst}", tab)
         raise (ValueError(f"Unknown instruction: {inst}"))
+
+def call_wasi_snapshot_preview1_environ_sizes_get(stack: list[any], mem: list[int], tab: int):
+    stack.pop()
+    stack.pop()
+    stack.append(Value(1, ValType.I32))
+
+def call_wasi_snapshot_preview1_environ_get(stack: list[any], mem: list[int], tab: int):
+    print(stack)
+    print(mem[stack[-1].val])
+    exit(1)
+
+def call_imported_function(fidx, name: str, stack: list[any], mem: list[int], tab: int):
+    debug(f"Calling imported function {name}", tab)
+    if name == 'wasi_snapshot_preview1.environ_sizes_get':
+        return call_wasi_snapshot_preview1_environ_sizes_get(stack, mem, tab)
+    elif name == 'wasi_snapshot_preview1.environ_get':
+        return call_wasi_snapshot_preview1_environ_get(stack, mem, tab)
+    raise ValueError(f"Unsupported import function {name}")
 
 
 def exec_function(
