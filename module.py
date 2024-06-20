@@ -123,6 +123,9 @@ class WasmFunction:
         self.parameter_types = parameter_types
         self.result_types = result_types
 
+    def __str__(self):
+        return f"WasmFunction({self.parameter_types}) -> {self.result_types}"
+
 
 def init_module(mod: Module):
     debug("Initializing module")
@@ -159,14 +162,14 @@ def init_module(mod: Module):
         exit("No start section found")
 
     imports = {
-        "__memory_base": 1000000,
+        "__memory_base": 0,
         "__stack_pointer": 10000000,
-        "__table_base": 15000000,
-        "__heap_base": 20000000,
+        "__table_base": 0,
+        "__heap_base": 11000000,
     }
     globals: list[Value] = []
-    mem = [0] * 40000000
-    tables = []
+    mem = [0] * 20000000
+    table: list[FuncIdx] = []
     function_list = []
     function_names = []
     if import_section is not None:
@@ -185,8 +188,8 @@ def init_module(mod: Module):
                 if len(mem) < imp.d.lim.n:
                     mem.extend([0] * (imp.d.lim.n - len(mem)))
             elif isinstance(imp.d, TableType):
-                if len(tables) < imp.d.lim.n:
-                    tables.extend([0] * imp.d.lim.n)
+                if len(table) < imp.d.lim.n:
+                    table.extend([None] * imp.d.lim.n)
             else:
                 exit(f"Unsupported import: {imp}")
 
@@ -220,8 +223,11 @@ def init_module(mod: Module):
         assert len(expr.instructions) == 2
         assert expr.instructions[0].opcode == Opcode.global_get
         assert expr.instructions[1].opcode == Opcode.end
+        assert memidx.x == 0
         idx = globals[expr.instructions[0].operands[0]].val
-        debug(f"Initializing data memidx={memidx}, offset={idx}")
+        debug(
+            f"Initializing data memidx={memidx}, offset={idx}, len={len(b)}, current mem len={len(mem)}"
+        )
         if len(mem) < idx + len(b):
             needed = idx + len(b) - len(mem)
             mem.extend([0] * needed)
@@ -247,6 +253,20 @@ def init_module(mod: Module):
                 function_names.extend(["?"] * (export.d.x + 1 - len(function_names)))
             function_names[export.d.x] = export.nm
 
+    debug("Processing elements section")
+    for element in element_section.elemsec:
+        element: Elem
+        expr = element.e
+        assert len(expr.instructions) == 2
+        assert expr.instructions[0].opcode == Opcode.global_get
+        assert expr.instructions[1].opcode == Opcode.end
+        idx = globals[expr.instructions[0].operands[0]].val
+        y = element.y
+        assert len(y) <= len(table)
+        debug(f"Initializing element, offset={idx}, len={len(y)}")
+        for i in range(len(y)):
+            table[i] = y[i]
+
     # print(f"start fun = {start.start.x}")
     # startx = start.start.x - len(import_functions)
     # f = functions.funcs[startx]
@@ -266,12 +286,12 @@ def init_module(mod: Module):
         stack,
         globals,
         mem,
+        table,
         function_list,
         typ,
         code,
         import_functions,
         function_names,
-        element_section,
         [],
     )
 
@@ -285,12 +305,12 @@ def init_module(mod: Module):
         stack,
         globals,
         mem,
+        table,
         function_list,
         typ,
         code,
         import_functions,
         function_names,
-        element_section,
         ["__wasm_call_ctors"],
     )
 
@@ -304,12 +324,12 @@ def init_module(mod: Module):
         stack,
         globals,
         mem,
+        table,
         function_list,
         typ,
         code,
         import_functions,
         function_names,
-        element_section,
         ["wasm_apply_data_relocs"],
     )
 
@@ -326,6 +346,7 @@ def init_module(mod: Module):
     #     stack,
     #     globals,
     #     mem,
+    #     table,
     #     function_list,
     #     typ,
     #     code,
@@ -352,6 +373,7 @@ def init_module(mod: Module):
     #     stack,
     #     globals,
     #     mem,
+    #     table,
     #     function_list,
     #     typ,
     #     code,
@@ -490,12 +512,12 @@ def exec_instruction(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
+    table: list[FuncIdx],
     functions: list[ImportFunction | WasmFunction],
     typ: TypeSection,
     codes: CodeSection,
     import_functions: list[ImportFunction],
     function_names: list[str],
-    element_section: ElementSection,
     call_stack: list[str],
     tab: int = 0,
 ) -> Optional[Jump]:
@@ -506,12 +528,12 @@ def exec_instruction(
             stack,
             globals,
             mem,
+            table,
             functions,
             typ,
             codes,
             import_functions,
             function_names,
-            element_section,
             call_stack,
             tab,
         )
@@ -583,9 +605,10 @@ def pop_stack(
 def function_id(num: int) -> str:
     def fid(num: int) -> str:
         if num < 26:
-            return chr(ord('a') + num)
+            return chr(ord("a") + num)
         else:
-            return chr(ord('a') + num % 26) + fid(num // 26)
+            return chr(ord("a") + num % 26) + fid(num // 26)
+
     return fid(num - 26)
 
 
@@ -595,12 +618,12 @@ def exec_instruction_inner(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
+    table: list[FuncIdx],
     functions: list[ImportFunction | WasmFunction],
     typ: TypeSection,
     codes: CodeSection,
     import_functions: list[ImportFunction],
     function_names: list[str],
-    element_section: ElementSection,
     call_stack: list[str],
     tab: int = 0,
 ) -> Optional[Jump]:
@@ -608,9 +631,9 @@ def exec_instruction_inner(
     global global_counter
     if global_counter == 6445:
         pass
-    if '_PyErr_Format' in call_stack:
+    if "_PyErr_Format" in call_stack:
         exit(1)
-    if call_stack.count('_PyErr_SetObject') == 2:
+    if call_stack.count("_PyErr_SetObject") == 2:
         exit(1)
     debug("")
     debug(
@@ -939,12 +962,12 @@ def exec_instruction_inner(
                     stack,
                     globals,
                     mem,
+                    table,
                     functions,
                     typ,
                     codes,
                     import_functions,
                     function_names,
-                    element_section,
                     call_stack,
                     tab + 1,
                 )
@@ -956,7 +979,7 @@ def exec_instruction_inner(
         elif else_:
             block_idx = block_counter
             block_counter += 1
-            label = new_label(bt, f"else {block_idx}", tab)
+            label = new_label(bt, f"else {block_idx}")
             debug(f"Entering else {block_idx}", tab)
             debug(f"Pushing label: {label}", tab)
             stack.append(label)
@@ -970,12 +993,12 @@ def exec_instruction_inner(
                     stack,
                     globals,
                     mem,
+                    table,
                     functions,
                     typ,
                     codes,
                     import_functions,
                     function_names,
-                    element_section,
                     call_stack,
                     tab + 1,
                 )
@@ -1002,12 +1025,12 @@ def exec_instruction_inner(
                 stack,
                 globals,
                 mem,
+                table,
                 functions,
                 typ,
                 codes,
                 import_functions,
                 function_names,
-                element_section,
                 call_stack,
                 tab + 1,
             )
@@ -1044,12 +1067,12 @@ def exec_instruction_inner(
                     stack,
                     globals,
                     mem,
+                    table,
                     functions,
                     typ,
                     codes,
                     import_functions,
                     function_names,
-                    element_section,
                     call_stack,
                     tab + 1,
                 )
@@ -1070,9 +1093,20 @@ def exec_instruction_inner(
         fidx = inst.operands[0]
         f = functions[fidx.x]
         if isinstance(f, ImportFunction):
-            return call_imported_function(fidx.x, function_names[fidx.x], stack,
-                                          mem,
-                                          tab)
+            return call_imported_function(
+                function_names[fidx.x],
+                stack,
+                globals,
+                mem,
+                table,
+                functions,
+                typ,
+                codes,
+                import_functions,
+                function_names,
+                call_stack,
+                tab,
+            )
             # raise ValueError("Not supported yet: calling imported function %d -> %s" % (fidx.x, function_names[fidx.x]))
         else:
             code2 = f.code
@@ -1100,23 +1134,25 @@ def exec_instruction_inner(
                 stack,
                 globals,
                 mem,
+                table,
                 functions,
                 typ,
                 codes,
                 import_functions,
                 function_names,
-                element_section,
                 call_stack + [fname],
             )
     elif inst.opcode == Opcode.call_indirect:
         typ_idx = inst.operands[0].x
         # t = typ.function_types[tidx]
-        table_idx = 0 # WebAssembly v1 requires this
-        table = element_section.elemsec[table_idx]
-        fidx = table.y[typ_idx]
+        table_idx = 0  # WebAssembly v1 requires this
+        fidx = table[typ_idx]
         f = functions[fidx.x]
         print(inst)
-        debug(f"*** Call indirect table idx {table_idx} {typ_idx} {fidx.x} -> {function_names[fidx.x]}", tab)
+        debug(
+            f"*** Call indirect table idx {table_idx} {typ_idx} {fidx.x} -> {function_names[fidx.x]}",
+            tab,
+        )
         if fidx.x == 0:
             exit(1)
         if isinstance(f, ImportFunction):
@@ -1146,12 +1182,12 @@ def exec_instruction_inner(
                 stack,
                 globals,
                 mem,
+                table,
                 functions,
                 typ,
                 codes,
                 import_functions,
                 function_names,
-                element_section,
                 call_stack + [fname],
             )
     elif inst.opcode == Opcode.return_:
@@ -1162,23 +1198,224 @@ def exec_instruction_inner(
         debug(f"Current instruction: {inst}", tab)
         raise (ValueError(f"Unknown instruction: {inst}"))
 
-def call_wasi_snapshot_preview1_environ_sizes_get(stack: list[any], mem: list[int], tab: int):
+
+def call_wasi_snapshot_preview1_environ_sizes_get(
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    table: list[FuncIdx],
+    functions: list[ImportFunction | WasmFunction],
+    typ: TypeSection,
+    codes: CodeSection,
+    import_functions: list[ImportFunction],
+    function_names: list[str],
+    call_stack: list[str],
+    tab: int = 0,
+):
     stack.pop()
     stack.pop()
     stack.append(Value(1, ValType.I32))
 
-def call_wasi_snapshot_preview1_environ_get(stack: list[any], mem: list[int], tab: int):
+
+def call_wasi_snapshot_preview1_environ_get(
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    table: list[FuncIdx],
+    functions: list[ImportFunction | WasmFunction],
+    typ: TypeSection,
+    codes: CodeSection,
+    import_functions: list[ImportFunction],
+    function_names: list[str],
+    call_stack: list[str],
+    tab: int = 0,
+):
     print(stack)
     print(mem[stack[-1].val])
     exit(1)
 
-def call_imported_function(fidx, name: str, stack: list[any], mem: list[int], tab: int):
+
+def call_env_invoke_i(
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    table: list[FuncIdx],
+    functions: list[ImportFunction | WasmFunction],
+    typ: TypeSection,
+    codes: CodeSection,
+    import_functions: list[ImportFunction],
+    function_names: list[str],
+    call_stack: list[str],
+    tab: int = 0,
+):
+    x = stack.pop().val
+    fidx = table[x]
+    name = function_names[fidx.x]
+    debug(f"Call invoke_i({name})")
+    f = functions[fidx.x]
+    if isinstance(f, ImportFunction):
+        return call_imported_function(
+            function_names[fidx.x],
+            stack,
+            globals,
+            mem,
+            table,
+            functions,
+            typ,
+            codes,
+            import_functions,
+            function_names,
+            call_stack,
+            tab,
+        )
+        # raise ValueError("Not supported yet: calling imported function %d -> %s" % (fidx.x, function_names[fidx.x]))
+    else:
+        code2 = f.code
+        parameter_types = f.parameter_types
+        # type_idx = functions.funcs[fidx.x].x
+        # parameter_types = typ.function_types[type_idx].parameter_types
+
+        parameters = []
+        for i in range(len(parameter_types)):
+            parameters.append(stack.pop())
+        parameters.reverse()
+        if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+            fname = function_names[x]
+            debug(
+                f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})",
+                tab,
+            )
+        else:
+            fname = f"f_{function_id(fidx.x)}"
+            debug(f"\n\n*** Call f_{function_id(fidx.x)}({parameters})", tab)
+        return exec_function(
+            code2,
+            parameters,
+            f.result_types,
+            stack,
+            globals,
+            mem,
+            table,
+            functions,
+            typ,
+            codes,
+            import_functions,
+            function_names,
+            call_stack + [fname],
+        )
+
+
+def call_env_invoke(arg_count):
+    def invoke(
+        stack: list[Value],
+        globals: list[Value],
+        mem: list[int],
+        table: list[FuncIdx],
+        functions: list[ImportFunction | WasmFunction],
+        typ: TypeSection,
+        codes: CodeSection,
+        import_functions: list[ImportFunction],
+        function_names: list[str],
+        call_stack: list[str],
+        tab: int = 0,
+    ):
+        x = stack.pop(-arg_count - 1).val
+        fidx = table[x]
+        name = function_names[fidx.x]
+        debug(f"Call invoke_ii({name})")
+        f = functions[fidx.x]
+        if isinstance(f, ImportFunction):
+            return call_imported_function(
+                function_names[fidx.x],
+                stack,
+                globals,
+                mem,
+                table,
+                functions,
+                typ,
+                codes,
+                import_functions,
+                function_names,
+                call_stack,
+                tab,
+            )
+            # raise ValueError("Not supported yet: calling imported function %d -> %s" % (fidx.x, function_names[fidx.x]))
+        else:
+            code2 = f.code
+            parameter_types = f.parameter_types
+            # type_idx = functions.funcs[fidx.x].x
+            # parameter_types = typ.function_types[type_idx].parameter_types
+
+            parameters = []
+            for i in range(len(parameter_types)):
+                parameters.append(stack.pop())
+            parameters.reverse()
+            if fidx.x < len(function_names) and function_names[fidx.x] != "?":
+                fname = function_names[x]
+                debug(
+                    f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})",
+                    tab,
+                )
+            else:
+                fname = f"f_{function_id(fidx.x)}"
+                debug(f"\n\n*** Call f_{function_id(fidx.x)}({parameters})", tab)
+            return exec_function(
+                code2,
+                parameters,
+                f.result_types,
+                stack,
+                globals,
+                mem,
+                table,
+                functions,
+                typ,
+                codes,
+                import_functions,
+                function_names,
+                call_stack + [fname],
+            )
+    return invoke
+
+def call_imported_function(
+    name: str,
+    stack: list[Value],
+    globals: list[Value],
+    mem: list[int],
+    table: list[FuncIdx],
+    functions: list[ImportFunction | WasmFunction],
+    typ: TypeSection,
+    codes: CodeSection,
+    import_functions: list[ImportFunction],
+    function_names: list[str],
+    call_stack: list[str],
+    tab: int = 0,
+):
     debug(f"Calling imported function {name}", tab)
-    if name == 'wasi_snapshot_preview1.environ_sizes_get':
-        return call_wasi_snapshot_preview1_environ_sizes_get(stack, mem, tab)
-    elif name == 'wasi_snapshot_preview1.environ_get':
-        return call_wasi_snapshot_preview1_environ_get(stack, mem, tab)
-    raise ValueError(f"Unsupported import function {name}")
+    f = {
+        "wasi_snapshot_preview1.environ_sizes_get": call_wasi_snapshot_preview1_environ_sizes_get,
+        "wasi_snapshot_preview1.environ_get": call_wasi_snapshot_preview1_environ_get,
+        "env.invoke_i": call_env_invoke(0),
+        "env.invoke_ii": call_env_invoke(1),
+        "env.invoke_iii": call_env_invoke(2),
+        "env.invoke_iiii": call_env_invoke(3),
+        "env.invoke_vi": call_env_invoke(1),
+        "env.invoke_vii": call_env_invoke(2),
+    }
+    if name not in f:
+        raise ValueError(f"Unsupported import function {name}")
+    f[name](
+        stack,
+        globals,
+        mem,
+        table,
+        functions,
+        typ,
+        codes,
+        import_functions,
+        function_names,
+        call_stack,
+        tab,
+    )
 
 
 def exec_function(
@@ -1188,12 +1425,12 @@ def exec_function(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
+    table: list[FuncIdx],
     functions: list[ImportFunction | WasmFunction],
     typ: TypeSection,
     codes: CodeSection,
     import_functions: list[ImportFunction],
     function_names: list[str],
-    element_section: ElementSection,
     call_stack: list[str],
 ) -> Optional[Jump]:
     locals = []
@@ -1215,12 +1452,12 @@ def exec_function(
             new_stack,
             globals,
             mem,
+            table,
             functions,
             typ,
             codes,
             import_functions,
             function_names,
-            element_section,
             call_stack,
         )
         if j is not None:
@@ -1250,6 +1487,7 @@ def read_module(f: bytes) -> Module:
         current += length
         contents = f[current : current + section_size]
         current += section_size
+        debug(f"Section id {section_id}")
         if section_id == CUSTOM_SECTION_ID:
             section = parse_custom_section(contents)
             debug(f"Custom section name: {section.name}, length={len(section.bytes)}")
@@ -1356,6 +1594,7 @@ def parse_import_section(raw: bytes) -> ImportSection:
 
 def read_element(raw: BinaryIO) -> Elem:
     x = read_u32(raw)
+    assert x == 0
     x = TableIdx(x)
     e = read_expr(raw)
     y = read_vector(raw, decoder=read_u32)
@@ -1411,6 +1650,8 @@ def read_expr(raw: BinaryIO, term=frozenset([0xB])) -> Expr:
 
 def read_data(raw: BinaryIO) -> Data:
     x = read_u32(raw)
+    print(x)
+    assert x == 0
     x = MemIdx(x)
     e = read_expr(raw)
     b = read_vector_bytes(raw)
