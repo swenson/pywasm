@@ -1374,7 +1374,9 @@ def call_env_invoke(arg_count):
                 function_names,
                 call_stack + [fname],
             )
+
     return invoke
+
 
 def call_imported_function(
     name: str,
