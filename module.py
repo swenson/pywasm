@@ -1,14 +1,10 @@
 from array import array
 from collections import namedtuple
 from enum import IntEnum
-from typing import Callable, BinaryIO, Optional
+from typing import BinaryIO, Callable, Optional
 import sys
 import struct
 import io
-import time
-import pdb
-
-import argparse
 
 global DEBUG
 global block_counter
@@ -53,6 +49,7 @@ MemType = namedtuple("MemType", ["lim"])
 GlobalType = namedtuple("GlobalType", ["t", "m"])
 Global = namedtuple("Global", ["gt", "e"])
 FuncRef = 0x70
+ExternRef = 0x6f
 Limits = namedtuple("Limits", ["n", "m"])
 Expr = namedtuple("Expr", ["instructions"])
 Export = namedtuple("Export", ["nm", "d"])
@@ -89,6 +86,7 @@ class ValType(IntEnum):
     I64 = 0x7E
     F32 = 0x7D
     F64 = 0x7C
+    EXTERN_REF = 0x6F
 
 
 default_values = {
@@ -163,12 +161,12 @@ def init_module(mod: Module):
 
     imports = {
         "__memory_base": 0,
-        "__stack_pointer": 10000000,
+        "__stack_pointer": 20000000,
         "__table_base": 0,
-        "__heap_base": 11000000,
+        "__heap_base": 30000000,
     }
     globals: list[Value] = []
-    mem = [0] * 20000000
+    mem = [0] * 40000000
     table: list[FuncIdx] = []
     function_list = []
     function_names = []
@@ -295,25 +293,6 @@ def init_module(mod: Module):
         [],
     )
 
-    debug("*** Call __wasm_call_ctors()")
-    x = exports["__wasm_call_ctors"].x
-    parameters = []
-    exec_function(
-        function_list[x].code,
-        parameters,
-        function_list[x].result_types,
-        stack,
-        globals,
-        mem,
-        table,
-        function_list,
-        typ,
-        code,
-        import_functions,
-        function_names,
-        ["__wasm_call_ctors"],
-    )
-
     debug("*** Call __wasm_apply_data_relocs()")
     x = exports["__wasm_apply_data_relocs"].x
     parameters = []
@@ -331,6 +310,25 @@ def init_module(mod: Module):
         import_functions,
         function_names,
         ["wasm_apply_data_relocs"],
+    )
+
+    debug("*** Call __wasm_call_ctors()")
+    x = exports["__wasm_call_ctors"].x
+    parameters = []
+    exec_function(
+        function_list[x].code,
+        parameters,
+        function_list[x].result_types,
+        stack,
+        globals,
+        mem,
+        table,
+        function_list,
+        typ,
+        code,
+        import_functions,
+        function_names,
+        ["__wasm_call_ctors"],
     )
 
     # debug("*** Call Py_Initialize()")
@@ -386,6 +384,7 @@ def init_module(mod: Module):
 
 i64_mask = 0xFFFFFFFFFFFFFFFF
 i32_mask = 0xFFFFFFFF
+i16_mask = 0xFFFF
 i8_mask = 0xFF
 i32_sign = 0x80000000
 i64_sign = 0x8000000000000000
@@ -414,8 +413,8 @@ def i32_add(a: int, b: int) -> int:
     a = a & i32_mask
     b = b & i32_mask
     s = (a + b) & i32_mask
-    if s & i32_sign:
-        s = -(-s & i32_mask)
+    # if s & i32_sign:
+    #     s = -(-s & i32_mask)
     return s
 
 
@@ -432,6 +431,12 @@ def i32_div_u(a: int, b: int) -> int:
     c = (a // b) & i32_mask
     return c
 
+def i32_rem_u(a: int, b: int) -> int:
+    a = a & i32_mask
+    b = b & i32_mask
+    c = (a % b) & i32_mask
+    return c
+
 
 def i32_div_s(a: int, b: int) -> int:
     a = i32_to_s32(a)
@@ -441,9 +446,9 @@ def i32_div_s(a: int, b: int) -> int:
 
 
 def i32_shl(a: int, b: int) -> int:
-    s = (a << b) & i32_mask
-    if s & i32_sign:
-        s = -(-s & i32_mask)
+    s = ((a & i32_mask) << (b & i32_mask)) & i32_mask
+    # if s & i32_sign:
+    #     s = -(-s & i32_mask)
     return s
 
 
@@ -603,13 +608,14 @@ def pop_stack(
 
 
 def function_id(num: int) -> str:
-    def fid(num: int) -> str:
-        if num < 26:
-            return chr(ord("a") + num)
-        else:
-            return chr(ord("a") + num % 26) + fid(num // 26)
+    # def fid(num: int) -> str:
+    #     if num < 26:
+    #         return chr(ord("a") + num)
+    #     else:
+    #         return chr(ord("a") + num % 26) + fid(num // 26)
 
-    return fid(num - 26)
+    # return fid(num - 26)
+    return str(num)
 
 
 def exec_instruction_inner(
@@ -654,7 +660,8 @@ def exec_instruction_inner(
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         num = struct.unpack("<I", mem_read(mem, addr, 4))[0]
-        debug(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> 0x{num:x}", tab)
+        debug(f"Load 0x{base_addr:x}+0x{offset:x}=0x{addr:x} -> 0x{num:x} ({num})", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i64_load:
         offset = inst.operands[1]
@@ -662,55 +669,85 @@ def exec_instruction_inner(
         addr = base_addr + offset
         num = struct.unpack("<Q", mem_read(mem, addr, 8))[0]
         debug(f"Load 0x{base_addr:x}+0x{offset:x}={addr:x} -> (64-bit) 0x{num:x}", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.i64_store:
         offset = inst.operands[1]
-        val = stack.pop().val & i64_mask
+        x = stack.pop()
+        assert x.type == ValType.I64
+        val = x.val & i64_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         debug(f"Store 0x{addr:x} -> (64-bit) 0x{val:x}", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
         data = struct.pack("<Q", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store:
         offset = inst.operands[1]
-        val = stack.pop().val & i32_mask
+        x = stack.pop()
+        assert x.type == ValType.I32
+        val = x.val & i32_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        debug(f"Store 0x{addr:x} -> 0x{val:x}", tab)
+        debug(f"Store 0x{base_addr}+0x{offset}=0x{addr:x} -> 0x{val:x}", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
         data = struct.pack("<I", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_store8:
         offset = inst.operands[1]
-        val = stack.pop().val & i8_mask
+        x = stack.pop()
+        assert x.type == ValType.I32
+        val = x.val & i8_mask
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
         debug(f"Store 0x{addr:x} -> (8-bit) 0x{val:x}", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
         data = struct.pack("<B", val)
+        mem_write(mem, addr, data)
+    elif inst.opcode == Opcode.i32_store16:
+        offset = inst.operands[1]
+        x = stack.pop()
+        assert x.type == ValType.I32
+        val = x.val & i16_mask
+        base_addr = stack.pop().val & i32_mask
+        addr = base_addr + offset
+        debug(f"Store 0x{addr:x} -> (16-bit) 0x{val:x}", tab)
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
+        data = struct.pack("<H", val)
         mem_write(mem, addr, data)
     elif inst.opcode == Opcode.i32_load8_u:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<B", bytes(mem[addr : addr + 1]))[0]
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
+        if addr >= len(mem):
+            raise ValueError(f"Attempted to read past memory: {addr} >= {len(mem)}")
+            #debug(f"Attempted to read past memory: {addr} >= {len(mem)}", tab)
+            #num = 0
+        else:
+            num = struct.unpack("<B", mem_read(mem, addr, 1))[0]
         debug(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}", tab)
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load8_s:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<b", bytes(mem[addr : addr + 1]))[0]
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
+        num = struct.unpack("<b", mem_read(mem, addr, 1))[0]
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i32_load16_u:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
+        num = struct.unpack("<H", mem_read(mem, addr, 2))[0]
         stack.append(Value(num, ValType.I32))
     elif inst.opcode == Opcode.i64_load32_u:
         offset = inst.operands[1]
         base_addr = stack.pop().val & i32_mask
         addr = base_addr + offset
-        num = struct.unpack("<H", bytes(mem[addr : addr + 2]))[0]
+        assert addr & ((1 << inst.operands[0]) - 1) == 0
+        num = struct.unpack("<H", mem_read(mem, addr, 4))[0]
         stack.append(Value(num, ValType.I64))
     elif inst.opcode == Opcode.local_set:
         idx = inst.operands[0]
@@ -756,7 +793,12 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_div_u:
         b = stack.pop()
         a = stack.pop()
-        debug(f"  div: {a.val} / {b.val} = {i32_div_u(a.val, b.val)}", tab)
+        debug(f"  div: {a.val} / {b.val} = {i32_rem_u(a.val, b.val)}", tab)
+        stack.append(Value(i32_rem_u(a.val, b.val), ValType.I32))
+    elif inst.opcode == Opcode.i32_rem_u:
+        b = stack.pop()
+        a = stack.pop()
+        debug(f"  rem: {a.val} % {b.val} = {i32_div_u(a.val, b.val)}", tab)
         stack.append(Value(i32_div_u(a.val, b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_div_s:
         b = stack.pop()
@@ -771,12 +813,12 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_or:
         b = stack.pop()
         a = stack.pop()
-        stack.append(Value(a.val | b.val, ValType.I32))
+        stack.append(Value(i32_to_u32(a.val) | i32_to_u32(b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_xor:
         b = stack.pop()
         a = stack.pop()
         debug(f"  xor: {a.val} ^ {b.val} -> {a.val ^ b.val}", tab)
-        stack.append(Value(a.val ^ b.val, ValType.I32))
+        stack.append(Value(i32_to_u32(a.val) ^ i32_to_u32(b.val), ValType.I32))
     elif inst.opcode == Opcode.i32_shl:
         b = stack.pop()
         a = stack.pop()
@@ -796,7 +838,9 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_eq:
         b = stack.pop()
         a = stack.pop()
-        if a.val == b.val:
+        assert a.type == ValType.I32
+        assert b.type == ValType.I32
+        if (a.val & i32_mask) == (b.val & i32_mask):
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
@@ -840,7 +884,10 @@ def exec_instruction_inner(
     elif inst.opcode == Opcode.i32_ne:
         b = stack.pop()
         a = stack.pop()
-        if i32_to_s32(a.val) != i32_to_s32(b.val):
+        assert a.type == ValType.I32
+        assert b.type == ValType.I32
+        if (a.val & i32_mask) != (b.val & i32_mask):
+        #if i32_to_s32(a.val) != i32_to_s32(b.val):
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
@@ -1050,9 +1097,9 @@ def exec_instruction_inner(
         debug(f"Pushing label: {stack[-1]}", tab)
         j = None
         continue_loop = True
-        debug("*** begin loop", tab)
+        debug("** begin loop", tab)
         while continue_loop:
-            debug("*** continue loop", tab)
+            debug("** continue loop", tab)
             # restore label if it was lost
             # TODO: this will prevent a loop from "returning" a value, which
             # may or may not be possible according to the spec
@@ -1235,7 +1282,7 @@ def call_wasi_snapshot_preview1_environ_get(
     exit(1)
 
 
-def call_env_invoke_i(
+def call_cxa_throw(
     stack: list[Value],
     globals: list[Value],
     mem: list[int],
@@ -1248,62 +1295,11 @@ def call_env_invoke_i(
     call_stack: list[str],
     tab: int = 0,
 ):
-    x = stack.pop().val
-    fidx = table[x]
-    name = function_names[fidx.x]
-    debug(f"Call invoke_i({name})")
-    f = functions[fidx.x]
-    if isinstance(f, ImportFunction):
-        return call_imported_function(
-            function_names[fidx.x],
-            stack,
-            globals,
-            mem,
-            table,
-            functions,
-            typ,
-            codes,
-            import_functions,
-            function_names,
-            call_stack,
-            tab,
-        )
-        # raise ValueError("Not supported yet: calling imported function %d -> %s" % (fidx.x, function_names[fidx.x]))
-    else:
-        code2 = f.code
-        parameter_types = f.parameter_types
-        # type_idx = functions.funcs[fidx.x].x
-        # parameter_types = typ.function_types[type_idx].parameter_types
-
-        parameters = []
-        for i in range(len(parameter_types)):
-            parameters.append(stack.pop())
-        parameters.reverse()
-        if fidx.x < len(function_names) and function_names[fidx.x] != "?":
-            fname = function_names[x]
-            debug(
-                f"\n\n*** Call {function_names[fidx.x]}({parameters}) (function {fidx.x})",
-                tab,
-            )
-        else:
-            fname = f"f_{function_id(fidx.x)}"
-            debug(f"\n\n*** Call f_{function_id(fidx.x)}({parameters})", tab)
-        return exec_function(
-            code2,
-            parameters,
-            f.result_types,
-            stack,
-            globals,
-            mem,
-            table,
-            functions,
-            typ,
-            codes,
-            import_functions,
-            function_names,
-            call_stack + [fname],
-        )
-
+    destructor = stack.pop()
+    t = stack.pop()
+    ptr = stack.pop()
+    debug(f"throw {ptr} {t} {destructor}")
+    raise ValueError("Exception thrown in WASM code")
 
 def call_env_invoke(arg_count):
     def invoke(
@@ -1396,12 +1392,14 @@ def call_imported_function(
     f = {
         "wasi_snapshot_preview1.environ_sizes_get": call_wasi_snapshot_preview1_environ_sizes_get,
         "wasi_snapshot_preview1.environ_get": call_wasi_snapshot_preview1_environ_get,
+        "env.invoke_v": call_env_invoke(0),
         "env.invoke_i": call_env_invoke(0),
         "env.invoke_ii": call_env_invoke(1),
         "env.invoke_iii": call_env_invoke(2),
         "env.invoke_iiii": call_env_invoke(3),
         "env.invoke_vi": call_env_invoke(1),
         "env.invoke_vii": call_env_invoke(2),
+        "env.__cxa_throw": call_cxa_throw,
     }
     if name not in f:
         raise ValueError(f"Unsupported import function {name}")
@@ -1474,7 +1472,7 @@ def exec_function(
     else:
         keep = []
     fname = call_stack[-1] if call_stack else ""
-    debug(f"*** ({fname}) Return: {keep}")
+    debug(f"*** ({fname}) Return: {keep}", tab=1)
 
 
 def read_module(f: bytes) -> Module:
@@ -1489,42 +1487,43 @@ def read_module(f: bytes) -> Module:
         current += length
         contents = f[current : current + section_size]
         current += section_size
+        r = io.BufferedReader(io.BytesIO(contents))
         debug(f"Section id {section_id}")
         if section_id == CUSTOM_SECTION_ID:
-            section = parse_custom_section(contents)
+            section = parse_custom_section(r)
             debug(f"Custom section name: {section.name}, length={len(section.bytes)}")
         elif section_id == TYPE_SECTION_ID:
-            section = parse_type_section(contents)
+            section = parse_type_section(r)
             debug(f"Type section, num functions = {len(section.function_types)}")
         elif section_id == IMPORT_SECTION_ID:
-            section = parse_import_section(contents)
+            section = parse_import_section(r)
             debug(f"Import section, {len(section.imports)} imports")
         elif section_id == FUNCTION_SECTION_ID:
-            section = parse_function_section(contents)
+            section = parse_function_section(r)
             debug(f"Function section, {len(section.funcs)} functions")
         elif section_id == TABLE_SECTION_ID:
-            section = parse_table_section(contents)
+            section = parse_table_section(r)
             debug(f"Table section, {section.tables}")
         elif section_id == MEMORY_SECTION_ID:
-            section = parse_memory_section(contents)
+            section = parse_memory_section(r)
             debug(f"Memory section, {section.memories}")
         elif section_id == GLOBAL_SECTION_ID:
-            section = parse_global_section(contents)
+            section = parse_global_section(r)
             debug(f"Global section, {len(section.globals)} globals")
         elif section_id == EXPORT_SECTION_ID:
-            section = parse_export_section(contents)
+            section = parse_export_section(r)
             debug(f"Export section, {len(section.exports)} exports")
         elif section_id == START_SECTION_ID:
-            section = parse_start_section(contents)
+            section = parse_start_section(r)
             debug(f"Start section, {section.start}")
         elif section_id == ELEMENT_SECTION_ID:
-            section = parse_element_section(contents)
+            section = parse_element_section(r)
             debug(f"Element section, {len(section.elemsec)} elements")
         elif section_id == CODE_SECTION_ID:
-            section = parse_code_section(contents)
+            section = parse_code_section(r)
             debug(f"Code section, {len(section.code)} entries")
         elif section_id == DATA_SECTION_ID:
-            section = parse_data_section(contents)
+            section = parse_data_section(r)
             data_bytes = sum(len(x.b) for x in section.seg)
             debug(f"Data section, {len(section.seg)} entries, size {data_bytes} bytes")
         else:
@@ -1534,62 +1533,52 @@ def read_module(f: bytes) -> Module:
     return Module(sections)
 
 
-def parse_data_section(raw: bytes) -> DataSection:
-    r = io.BytesIO(raw)
+def parse_data_section(r: io.BufferedReader) -> DataSection:
     data = read_vector(r, decoder=read_data)
     return DataSection(data)
 
 
-def parse_code_section(raw: bytes) -> CodeSection:
-    r = io.BytesIO(raw)
+def parse_code_section(r: io.BufferedReader) -> CodeSection:
     code = read_vector(r, decoder=read_code)
     return CodeSection(code)
 
 
-def parse_element_section(raw: bytes) -> ElementSection:
-    r = io.BytesIO(raw)
+def parse_element_section(r: io.BufferedReader) -> ElementSection:
     elemsec = read_vector(r, decoder=read_element)
     return ElementSection(elemsec)
 
 
-def parse_export_section(raw: bytes) -> ExportSection:
-    r = io.BytesIO(raw)
+def parse_export_section(r: io.BufferedReader) -> ExportSection:
     exports = read_vector(r, decoder=read_export)
     return ExportSection(exports)
 
 
-def parse_start_section(raw: bytes) -> StartSection:
-    r = io.BytesIO(raw)
+def parse_start_section(r: io.BufferedReader) -> StartSection:
     start = FuncIdx(read_u32(r))
     return StartSection(start)
 
 
-def parse_global_section(raw: bytes) -> GlobalSection:
-    r = io.BytesIO(raw)
+def parse_global_section(r: io.BufferedReader) -> GlobalSection:
     globals = read_vector(r, decoder=read_global)
     return GlobalSection(globals)
 
 
-def parse_memory_section(raw: bytes) -> MemorySection:
-    r = io.BytesIO(raw)
+def parse_memory_section(r: io.BufferedReader) -> MemorySection:
     memories = read_vector(r, decoder=read_mem)
     return MemorySection(memories)
 
 
-def parse_table_section(raw: bytes) -> TableSection:
-    r = io.BytesIO(raw)
+def parse_table_section(r: io.BufferedReader) -> TableSection:
     tables = read_vector(r, decoder=read_table)
     return TableSection(tables)
 
 
-def parse_function_section(raw: bytes) -> FunctionSection:
-    r = io.BytesIO(raw)
+def parse_function_section(r: io.BufferedReader) -> FunctionSection:
     funcs = read_vector(r, decoder=read_typeidx)
     return FunctionSection(funcs)
 
 
-def parse_import_section(raw: bytes) -> ImportSection:
-    r = io.BytesIO(raw)
+def parse_import_section(r: io.BufferedReader) -> ImportSection:
     imports = read_vector(r, decoder=read_import)
     return ImportSection(imports)
 
@@ -1630,11 +1619,12 @@ def read_global(raw: BinaryIO) -> Global:
     return Global(gt, e)
 
 
-def peek(r: BinaryIO) -> int:
-    c = r.tell()
-    p = r.read(1)[0]
-    r.seek(c, 0)
-    return p
+def peek(r: io.BufferedReader) -> int:
+    return r.peek(1)[0]
+    #c = r.tell()
+    #p = r.read(1)[0]
+    #r.seek(c, 0)
+    # return p
 
 
 def read_expr(raw: BinaryIO, term=frozenset([0xB])) -> Expr:
@@ -1662,10 +1652,10 @@ def read_data(raw: BinaryIO) -> Data:
 
 def read_code(raw: BinaryIO) -> Code:
     size = read_u32(raw)
-    c = raw.tell()
+    #c = raw.tell()
     code = read_func(raw)
-    d = raw.tell()
-    assert size == d - c
+    #d = raw.tell()
+    #assert size == d - c
     # print(f"code = {code.e.instructions}")
     return Code(size, code)
 
@@ -1939,17 +1929,20 @@ def read_instruction(r: BinaryIO) -> Op:
         return Op(op, None, None)
     elif op == 0x1A or op == 0x1B:
         return Op(op, None, None)
+    elif op == 0x1C:
+        v = read_vector(r, decoder=read_valtype)
+        return Op(op, None, (v,))
     elif op == 0x3F or op == 0x40:
         r.read(1)
         return Op(op, None, None)
     elif op == 0x02 or op == 0x03:
         bt = r.read(1)[0]
-        assert bt == 0x40 or 0x7C <= bt <= 0x7F
+        assert bt == 0x40 or bt == 0x6f or 0x7C <= bt <= 0x7F
         expr = read_expr(r).instructions
         return Op(op, bt, (expr,))
     elif op == 0x04:
         bt = r.read(1)[0]
-        assert bt == 0x40 or 0x7C <= bt <= 0x7F
+        assert bt == 0x40 or bt == 0x6f or 0x7C <= bt <= 0x7F
         then = read_expr(r, frozenset([0xB, 0x5])).instructions
         else_ = None
         if then[-1].opcode == Opcode.else_:
@@ -1989,6 +1982,14 @@ def read_instruction(r: BinaryIO) -> Op:
     elif op == 0x44:
         n = read_f64(r)
         return Op(op, None, (n,))
+    elif op == 0xd0:
+        n = read_u32(r)
+        return Op(op, None, (n,)),
+    elif op == 0xd1:
+        return Op(op, None, ()),
+    elif op == 0x25 or op == 0x26:
+        n = read_u32(r)
+        return Op(op, None, (TableIdx(n),))
     debug(f"op = {op:x}")
     assert False
 
@@ -2054,13 +2055,15 @@ def read_limits(raw: BinaryIO) -> Limits:
     return Limits(n, m)
 
 
-def read_elemtype(raw: BinaryIO) -> FuncRef:
-    assert raw.read(1)[0] == 0x70
+def read_elemtype(raw: BinaryIO) -> int:
+    r = raw.read(1)[0]
+    assert 0x6f <= r <= 0x70
+    if r == 0x6f:
+        return ExternRef
     return FuncRef
 
 
-def parse_type_section(raw: bytes) -> TypeSection:
-    r = io.BytesIO(raw)
+def parse_type_section(r: io.BufferedReader) -> TypeSection:
     function_types = read_vector(r, decoder=read_function_type)
     return TypeSection(function_types)
 
@@ -2076,8 +2079,7 @@ def read_valtype(raw: BinaryIO) -> ValType:
     return ValType(raw.read(1)[0])
 
 
-def parse_custom_section(raw: bytes) -> CustomSection:
-    r = io.BytesIO(raw)
+def parse_custom_section(r: io.BufferedReader) -> CustomSection:
     name = read_name(r)
     data = r.read()
     return CustomSection(name, data)
