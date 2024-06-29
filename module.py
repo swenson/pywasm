@@ -49,7 +49,7 @@ MemType = namedtuple("MemType", ["lim"])
 GlobalType = namedtuple("GlobalType", ["t", "m"])
 Global = namedtuple("Global", ["gt", "e"])
 FuncRef = 0x70
-ExternRef = 0x6f
+ExternRef = 0x6F
 Limits = namedtuple("Limits", ["n", "m"])
 Expr = namedtuple("Expr", ["instructions"])
 Export = namedtuple("Export", ["nm", "d"])
@@ -431,6 +431,7 @@ def i32_div_u(a: int, b: int) -> int:
     c = (a // b) & i32_mask
     return c
 
+
 def i32_rem_u(a: int, b: int) -> int:
     a = a & i32_mask
     b = b & i32_mask
@@ -722,8 +723,8 @@ def exec_instruction_inner(
         assert addr & ((1 << inst.operands[0]) - 1) == 0
         if addr >= len(mem):
             raise ValueError(f"Attempted to read past memory: {addr} >= {len(mem)}")
-            #debug(f"Attempted to read past memory: {addr} >= {len(mem)}", tab)
-            #num = 0
+            # debug(f"Attempted to read past memory: {addr} >= {len(mem)}", tab)
+            # num = 0
         else:
             num = struct.unpack("<B", mem_read(mem, addr, 1))[0]
         debug(f"  load byte {inst.operands} [0x{addr:x}] -> 0x{num:x}", tab)
@@ -887,7 +888,7 @@ def exec_instruction_inner(
         assert a.type == ValType.I32
         assert b.type == ValType.I32
         if (a.val & i32_mask) != (b.val & i32_mask):
-        #if i32_to_s32(a.val) != i32_to_s32(b.val):
+            # if i32_to_s32(a.val) != i32_to_s32(b.val):
             stack.append(Value(1, ValType.I32))
         else:
             stack.append(Value(0, ValType.I32))
@@ -1301,6 +1302,7 @@ def call_cxa_throw(
     debug(f"throw {ptr} {t} {destructor}")
     raise ValueError("Exception thrown in WASM code")
 
+
 def call_env_invoke(arg_count):
     def invoke(
         stack: list[Value],
@@ -1621,9 +1623,9 @@ def read_global(raw: BinaryIO) -> Global:
 
 def peek(r: io.BufferedReader) -> int:
     return r.peek(1)[0]
-    #c = r.tell()
-    #p = r.read(1)[0]
-    #r.seek(c, 0)
+    # c = r.tell()
+    # p = r.read(1)[0]
+    # r.seek(c, 0)
     # return p
 
 
@@ -1652,10 +1654,10 @@ def read_data(raw: BinaryIO) -> Data:
 
 def read_code(raw: BinaryIO) -> Code:
     size = read_u32(raw)
-    #c = raw.tell()
+    # c = raw.tell()
     code = read_func(raw)
-    #d = raw.tell()
-    #assert size == d - c
+    # d = raw.tell()
+    # assert size == d - c
     # print(f"code = {code.e.instructions}")
     return Code(size, code)
 
@@ -1937,12 +1939,12 @@ def read_instruction(r: BinaryIO) -> Op:
         return Op(op, None, None)
     elif op == 0x02 or op == 0x03:
         bt = r.read(1)[0]
-        assert bt == 0x40 or bt == 0x6f or 0x7C <= bt <= 0x7F
+        assert bt == 0x40 or bt == 0x6F or 0x7C <= bt <= 0x7F
         expr = read_expr(r).instructions
         return Op(op, bt, (expr,))
     elif op == 0x04:
         bt = r.read(1)[0]
-        assert bt == 0x40 or bt == 0x6f or 0x7C <= bt <= 0x7F
+        assert bt == 0x40 or bt == 0x6F or 0x7C <= bt <= 0x7F
         then = read_expr(r, frozenset([0xB, 0x5])).instructions
         else_ = None
         if then[-1].opcode == Opcode.else_:
@@ -1982,11 +1984,11 @@ def read_instruction(r: BinaryIO) -> Op:
     elif op == 0x44:
         n = read_f64(r)
         return Op(op, None, (n,))
-    elif op == 0xd0:
+    elif op == 0xD0:
         n = read_u32(r)
-        return Op(op, None, (n,)),
-    elif op == 0xd1:
-        return Op(op, None, ()),
+        return (Op(op, None, (n,)),)
+    elif op == 0xD1:
+        return (Op(op, None, ()),)
     elif op == 0x25 or op == 0x26:
         n = read_u32(r)
         return Op(op, None, (TableIdx(n),))
@@ -2057,8 +2059,8 @@ def read_limits(raw: BinaryIO) -> Limits:
 
 def read_elemtype(raw: BinaryIO) -> int:
     r = raw.read(1)[0]
-    assert 0x6f <= r <= 0x70
-    if r == 0x6f:
+    assert 0x6F <= r <= 0x70
+    if r == 0x6F:
         return ExternRef
     return FuncRef
 
