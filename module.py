@@ -2,9 +2,9 @@ from array import array
 from collections import namedtuple
 from enum import IntEnum
 from typing import BinaryIO, Callable, Optional
+import io
 import sys
 import struct
-import io
 
 global DEBUG
 global block_counter
@@ -2107,7 +2107,7 @@ def read_vector_bytes(raw: BinaryIO) -> bytes:
     return raw.read(vlen)
 
 
-def read_u32_bytes(f: bytes) -> (int, int):
+def read_u32_bytes(f: bytes) -> tuple[int, int]:
     l = 0
     b = f[0]
     num = b & 0x7F
